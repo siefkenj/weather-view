@@ -4,7 +4,11 @@
 // match the location's local time. We deliberately do NOT re-apply a timezone.
 
 export function parseLocal(iso: string): Date {
-  return new Date(iso);
+  // Time-bearing strings parse as browser-local wall-clock. Date-only strings
+  // (Open-Meteo's daily `time`, e.g. "2026-07-25") would instead parse as UTC
+  // midnight and shift back a day in negative-offset zones — pinning them to
+  // local midnight keeps weekday/date labels aligned with the location's day.
+  return new Date(iso.includes("T") ? iso : `${iso}T00:00`);
 }
 
 export function formatDayShort(iso: string): string {

@@ -62,23 +62,22 @@ function sliceHourly(h: HourlyPoint, start: number, end: number): HourlyPoint {
   };
 }
 
-/** Forecast window: from the start of "today" forward `days` days. */
-export function forecastWindow(resp: ForecastResponse, days: number): HourlyPoint {
-  const h = extractHourly(resp);
-  const today = dayKey(resp.current.time);
-  let start = h.time.findIndex((t) => dayKey(t) >= today);
-  if (start < 0) start = 0;
-  const end = start + days * 24;
-  return sliceHourly(h, start, Math.min(end, h.time.length));
+/** The distinct local day keys (YYYY-MM-DD) present in the block, in order. */
+export function dayList(h: HourlyPoint): string[] {
+  const days: string[] = [];
+  for (const t of h.time) {
+    const k = dayKey(t);
+    if (days[days.length - 1] !== k) days.push(k);
+  }
+  return days;
 }
 
-/** History window: the 24 hours of a specific YYYY-MM-DD. */
-export function dayWindow(resp: ForecastResponse, date: string): HourlyPoint {
-  const h = extractHourly(resp);
-  const start = h.time.findIndex((t) => dayKey(t) === date);
+/** Slice the hourly block to the days from `startKey` to `endKey`, inclusive. */
+export function windowByDays(h: HourlyPoint, startKey: string, endKey: string): HourlyPoint {
+  const start = h.time.findIndex((t) => dayKey(t) >= startKey);
   if (start < 0) return sliceHourly(h, 0, 0);
   let end = start;
-  while (end < h.time.length && dayKey(h.time[end]) === date) end++;
+  while (end < h.time.length && dayKey(h.time[end]) <= endKey) end++;
   return sliceHourly(h, start, end);
 }
 

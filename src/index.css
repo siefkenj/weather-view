@@ -408,30 +408,68 @@ button {
 }
 
 /* ---------- Options (collapsible, below the weather) ---------- */
-.options {
-  margin-top: 16px;
+/* ---------- Settings menu (header) ---------- */
+.settings {
+  position: relative;
+  flex: none;
 }
-.options__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: 999px;
+.settings__btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
   border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  flex: none;
+}
+.settings__btn:hover,
+.settings__btn[aria-expanded="true"] {
+  border-color: var(--accent);
+}
+.settings__menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 50;
+  width: min(320px, 86vw);
+  max-height: min(72vh, 620px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px;
   background: var(--surface);
-  color: var(--text-dim);
-  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   box-shadow: var(--shadow);
 }
-.options__toggle:hover {
-  border-color: var(--accent);
-  color: var(--text);
+.settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
 }
-.options__chevron {
+.settings__heading {
   font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
 }
-.options .controls {
-  margin-top: 10px;
+/* Inside the popover the controls stack vertically without the panel chrome. */
+.settings__menu .controls {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+/* Pill toggles (theme, °C/°F) hug their content instead of stretching the row. */
+.settings__menu .segmented {
+  align-self: flex-start;
 }
 
 /* ---------- Daily strip ---------- */
@@ -510,6 +548,84 @@ button {
 /* ---------- Meteogram ---------- */
 .meteogram-panel {
   padding: 10px 10px 4px;
+}
+
+/* The centered caption shows the visible date range and jumps back to today. */
+.meteogram-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 4px 6px;
+}
+.meteogram-nav__range {
+  min-width: 130px;
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+.meteogram-nav__range:hover:not(:disabled) {
+  background: var(--accent-weak);
+}
+.meteogram-nav__range:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+/* Tall scroll bars flank the chart: ‹ pans into recorded history, › pans further
+   into the forecast. Panning slides/fades the chart so the jump is easy to follow. */
+.meteogram-scroller {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.scroll-edge {
+  flex: 0 0 auto;
+  width: 34px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.scroll-edge:hover:not(:disabled) {
+  background: var(--accent-weak);
+  border-color: var(--accent);
+}
+.scroll-edge:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.meteogram-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.meteogram-viewport.is-clipping {
+  overflow: hidden;
+}
+.meteogram-anim {
+  will-change: transform;
+}
+/* Fixed snapshots of the axis gutters, held in place while the plot slides so the
+   scale numbers don't scroll with the graph. */
+.axis-mask {
+  position: absolute;
+  top: 0;
+  pointer-events: none;
+  z-index: 4;
 }
 
 /* Day/date + icon drawn directly ON the temperature graph, in the empty band at
@@ -739,5 +855,14 @@ button {
   }
   .meteogram {
     min-height: 320px;
+  }
+  /* Slimmer scroll bars so the tall (vertical) chart keeps more room for data. */
+  .meteogram-scroller {
+    gap: 4px;
+  }
+  .scroll-edge {
+    width: 20px;
+    font-size: 18px;
+    border-radius: 7px;
   }
 }

@@ -4,12 +4,14 @@
 
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { MAX_FORECAST_DAYS } from "../api/openMeteo";
+import { MAX_FORECAST_DAYS, MAX_PAST_DAYS } from "../api/openMeteo";
 import type { Units } from "../utils/units";
 
-export type ViewMode = "forecast" | "history";
 export type SeriesKey = "temp" | "feels" | "dew" | "wetbulb" | "enthalpy";
 export type PanelKey = "precip" | "atmo" | "air";
+
+/** Default visible window width, in days. */
+export const DEFAULT_WINDOW_DAYS = 10;
 
 // The order here is the chip order. The derived series (wet bulb, enthalpy) are
 // selectable but default OFF — see DEFAULTS.series — so the temp panel stays
@@ -20,26 +22,28 @@ export const ALL_PANELS: PanelKey[] = ["precip", "atmo", "air"];
 const DEFAULT_SERIES: SeriesKey[] = ["temp", "feels", "dew"];
 
 export interface DashboardState {
-  view: ViewMode;
+  /** Visible window width, in days. */
   days: number;
+  /** Window's left edge as an offset in days from today; negative = history. */
+  offset: number;
   series: SeriesKey[];
   panels: PanelKey[];
   ci: boolean;
   extraModels: string[];
-  date: string | null;
   units: Units;
 }
 
 const DEFAULTS: DashboardState = {
-  view: "forecast",
-  days: MAX_FORECAST_DAYS,
+  days: DEFAULT_WINDOW_DAYS,
+  offset: 0,
   series: DEFAULT_SERIES,
   panels: ALL_PANELS,
   ci: false,
   extraModels: [],
-  date: null,
   units: "metric",
 };
+
+const clampNum = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
 function parseCsv<T extends string>(value: string | null, allowed: readonly T[]): T[] | null {
   if (value == null) return null;
@@ -51,13 +55,17 @@ function parseCsv<T extends string>(value: string | null, allowed: readonly T[])
 }
 
 export function parseState(params: URLSearchParams): DashboardState {
-  const view = params.get("view") === "history" ? "history" : "forecast";
-
   const daysParam = params.get("days");
   const daysRaw = daysParam == null || daysParam === "" ? NaN : Number(daysParam);
   const days = Number.isFinite(daysRaw)
-    ? Math.min(Math.max(Math.round(daysRaw), 1), MAX_FORECAST_DAYS)
+    ? clampNum(Math.round(daysRaw), 1, MAX_FORECAST_DAYS)
     : DEFAULTS.days;
+
+  const offsetParam = params.get("offset");
+  const offsetRaw = offsetParam == null || offsetParam === "" ? 0 : Number(offsetParam);
+  const offset = Number.isFinite(offsetRaw)
+    ? clampNum(Math.round(offsetRaw), -MAX_PAST_DAYS, MAX_FORECAST_DAYS - 1)
+    : DEFAULTS.offset;
 
   const series = parseCsv(params.get("layers"), ALL_SERIES) ?? DEFAULTS.series;
   const panels = parseCsv(params.get("panels"), ALL_PANELS) ?? DEFAULTS.panels;
@@ -73,26 +81,24 @@ export function parseState(params: URLSearchParams): DashboardState {
   const units: Units = params.get("units") === "imperial" ? "imperial" : "metric";
 
   return {
-    view,
     days,
+    offset,
     series,
     panels,
     ci: params.get("ci") === "1",
     extraModels,
-    date: params.get("date"),
     units,
   };
 }
 
 function serializeState(state: DashboardState): URLSearchParams {
   const params = new URLSearchParams();
-  if (state.view !== DEFAULTS.view) params.set("view", state.view);
   if (state.days !== DEFAULTS.days) params.set("days", String(state.days));
+  if (state.offset !== DEFAULTS.offset) params.set("offset", String(state.offset));
   if (!sameSet(state.series, DEFAULTS.series)) params.set("layers", state.series.join(","));
   if (!sameSet(state.panels, DEFAULTS.panels)) params.set("panels", state.panels.join(","));
   if (state.ci) params.set("ci", "1");
   if (state.extraModels.length) params.set("models", state.extraModels.join(","));
-  if (state.view === "history" && state.date) params.set("date", state.date);
   if (state.units !== DEFAULTS.units) params.set("units", state.units);
   return params;
 }
@@ -128,10 +134,9 @@ export function useDashboardState() {
     toggleSeries: (key: SeriesKey) => update({ series: toggleIn(state.series, key) }),
     togglePanel: (key: PanelKey) => update({ panels: toggleIn(state.panels, key) }),
     setDays: (days: number) => update({ days }),
-    setView: (view: ViewMode) => update({ view }),
+    setOffset: (offset: number) => update({ offset }),
     setCi: (ci: boolean) => update({ ci }),
     setUnits: (units: Units) => update({ units }),
-    setDate: (date: string | null) => update({ date }),
     setExtraModels: (extraModels: string[]) => update({ extraModels }),
   };
 }

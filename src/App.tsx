@@ -1,24 +1,9 @@
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { LocationSearch } from "./components/LocationSearch";
+import { SettingsMenu } from "./components/SettingsMenu";
 import { WeatherIcon } from "./components/WeatherIcon";
-import { useTheme } from "./hooks/useTheme";
 import { placeToSlug } from "./utils/place";
 import type { Place } from "./api/types";
-
-function ThemeToggle() {
-  const { theme, toggle } = useTheme();
-  return (
-    <button
-      type="button"
-      className="theme-toggle"
-      onClick={toggle}
-      aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-      title="Toggle theme"
-    >
-      {theme === "dark" ? "☀" : "☾"}
-    </button>
-  );
-}
 
 export function App() {
   const navigate = useNavigate();
@@ -46,7 +31,7 @@ export function App() {
         </a>
         <div className="app__header-actions">
           <LocationSearch onSelect={goToPlace} />
-          <ThemeToggle />
+          <SettingsMenu />
         </div>
       </header>
 
