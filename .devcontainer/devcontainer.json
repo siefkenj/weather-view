@@ -1,0 +1,39 @@
+{
+    "name": "prefigure Python, JS & Rust DevContainer",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+    "features": {
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.12"
+        },
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "lts"
+        },
+        "ghcr.io/devcontainers/features/rust:1": {
+            "version": "latest"
+        },
+        // libcairo2-dev is required to build the optional pycairo extra used for text rendering.
+        // librsvg2-bin provides rsvg-convert, which prefig uses to convert SVGs into PDFs/PNGs.
+        "ghcr.io/devcontainers-extra/features/apt-packages:1": {
+            "packages": "libcairo2-dev,librsvg2-bin,vim"
+        },
+        // Unset the stale NODE_OPTIONS/VSCODE_INSPECTOR_OPTIONS that VS Code's Auto Attach
+        // debugger injects into terminals, which otherwise breaks node/npm with a missing
+        // ms-vscode.js-debug/bootloader.js. Avoids erroneous connections to the host's debugger.
+        "./features/shell-init-rc": {}
+    },
+    "postCreateCommand": "bash .devcontainer/postCreateCommand.sh",
+    "hostRequirements": {
+        "cpus": 2,
+        "memory": "8gb"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "rust-lang.rust-analyzer",
+                "esbenp.prettier-vscode",
+                "dbaeumer.vscode-eslint"
+            ]
+        }
+    }
+}
