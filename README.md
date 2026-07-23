@@ -17,13 +17,15 @@ permissive CORS), so the static site fetches everything directly from the browse
   - cloud cover / humidity / pressure.
 - **Confidence intervals** (toggle): 10–90% ensemble bands for temperature and
   precipitation, computed client-side from the ECMWF IFS ensemble (51 members).
-- **Air quality**: US AQI + PM2.5 / PM10 / ozone / NO₂.
+- **Air quality**: Canada's Air Quality Health Index (AQHI), graphed over the visible
+  days, plus PM2.5 / PM10 / ozone / NO₂. AQHI is computed client-side from the
+  pollutant concentrations per Environment and Climate Change Canada's method.
 - **Scrollable timeline**: the chart shows a 10-day window; the ‹ / › arrows pan left
   into the last ~90 days of recorded weather and right through the 16-day forecast —
   one continuous view, no separate history mode. The centered date range jumps back to
   today.
 - **City search** (geocoding) — the location is stored in the URL hash path; the query
-  string holds what's visible (`days`, `offset`, `layers`, `panels`, `ci`, `units`).
+  string holds what's visible (`days`, `offset`, `layers`, `panels`, `ci`, `unitsgit `).
 - Light/dark theme, responsive layout, °C/°F toggle.
 
 ## Stack

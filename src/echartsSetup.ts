@@ -11,6 +11,7 @@ import {
   MarkAreaComponent,
   MarkLineComponent,
   TooltipComponent,
+  VisualMapComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
@@ -24,6 +25,7 @@ echarts.use([
   DataZoomSliderComponent,
   MarkLineComponent,
   MarkAreaComponent,
+  VisualMapComponent,
   CanvasRenderer,
 ]);
 

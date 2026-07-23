@@ -125,6 +125,8 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   const seriesList: SeriesOption[] = [];
   const shade = dayShadeMarkArea(time, palette, "xAxis");
   const firstOfPanel = new Set<number>();
+  // Shared hover emphasis: thicken the line, never blur its neighbours/shading.
+  const lineEmph = { focus: "none" as const, lineStyle: { width: 3.4 } };
 
   const line = (
     name: string,
@@ -146,7 +148,9 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       smooth: 0.2,
       lineStyle: { color, width: 2 },
       itemStyle: { color },
-      emphasis: { focus: "series" },
+      // focus:"none" so hovering a line never dims the other series or the
+      // per-day background shading; it only thickens the hovered line.
+      emphasis: { focus: "none", lineStyle: { width: 3.4 } },
       ...(attachShade ? { markArea: shade } : {}),
       ...extra,
     } as SeriesOption;
@@ -244,6 +248,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       lineStyle: { color: palette.precipProb, width: 1.6 },
       itemStyle: { color: palette.precipProb },
       areaStyle: { color: palette.bandPrecip, opacity: 0.35 },
+      emphasis: lineEmph,
     });
   }
 
@@ -260,6 +265,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       smooth: 0.2,
       lineStyle: { color: palette.cloud, width: 0 },
       areaStyle: { color: palette.cloud },
+      emphasis: lineEmph,
       z: 1,
     });
     seriesList.push({
@@ -272,6 +278,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       smooth: 0.2,
       lineStyle: { color: palette.humidity, width: 1.8 },
       itemStyle: { color: palette.humidity },
+      emphasis: lineEmph,
     });
     seriesList.push({
       name: "Pressure",
@@ -283,6 +290,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       smooth: 0.2,
       lineStyle: { color: palette.pressure, width: 1.8 },
       itemStyle: { color: palette.pressure },
+      emphasis: lineEmph,
     });
   }
 
@@ -334,4 +342,42 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
 
 function tooltipHeader(iso: string): string {
   return `${formatDayShort(iso)} · ${formatTime(iso)}`;
+}
+
+export interface LegendEntry {
+  name: string;
+  color: string;
+}
+
+/**
+ * The visible series as {name, color} — names match the chart series exactly so
+ * the HTML legend can drive ECharts highlight/downplay and reflect line hovers.
+ */
+export function meteogramLegend(input: {
+  series: SeriesKey[];
+  panels: PanelKey[];
+  palette: ChartPalette;
+}): LegendEntry[] {
+  const { series, panels, palette } = input;
+  const s: Record<SeriesKey, LegendEntry> = {
+    temp: { name: "Temperature", color: palette.temp },
+    feels: { name: "Feels like", color: palette.feels },
+    dew: { name: "Dew point", color: palette.dew },
+    wetbulb: { name: "Wet bulb", color: palette.wetbulb },
+    enthalpy: { name: "Enthalpy", color: palette.enthalpy },
+  };
+  const out: LegendEntry[] = [];
+  (["temp", "feels", "dew", "wetbulb", "enthalpy"] as SeriesKey[]).forEach(
+    (k) => series.includes(k) && out.push(s[k]),
+  );
+  if (panels.includes("precip")) {
+    out.push({ name: "Precipitation", color: palette.precip });
+    out.push({ name: "Chance of precip", color: palette.precipProb });
+  }
+  if (panels.includes("atmo")) {
+    out.push({ name: "Cloud cover", color: palette.cloud });
+    out.push({ name: "Humidity", color: palette.humidity });
+    out.push({ name: "Pressure", color: palette.pressure });
+  }
+  return out;
 }

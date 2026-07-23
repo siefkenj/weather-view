@@ -48,6 +48,15 @@ export function dayKey(iso: string): string {
   return iso.slice(0, 10);
 }
 
+/** Shift a YYYY-MM-DD key by `n` days (calendar-correct, local). */
+export function addDays(key: string, n: number): string {
+  const d = parseLocal(dayKey(key));
+  d.setDate(d.getDate() + n);
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
 /** Today's YYYY-MM-DD in the given IANA timezone (falls back to browser zone). */
 export function todayInZone(timezone?: string): string {
   const fmt = new Intl.DateTimeFormat("en-CA", {

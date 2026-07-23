@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatWeekday, parseLocal } from "./format";
+import { addDays, formatWeekday, parseLocal } from "./format";
 
 describe("parseLocal", () => {
   // Open-Meteo's daily `time` is date-only ("2026-07-25"). `new Date("2026-07-25")`
@@ -28,5 +28,14 @@ describe("formatWeekday", () => {
   it("names the correct weekday for a date-only key", () => {
     expect(formatWeekday("2026-07-25")).toBe("Sat");
     expect(formatWeekday("2026-07-26")).toBe("Sun");
+  });
+});
+
+describe("addDays", () => {
+  it("shifts a date key across month boundaries", () => {
+    expect(addDays("2026-07-25", 1)).toBe("2026-07-26");
+    expect(addDays("2026-07-31", 1)).toBe("2026-08-01");
+    expect(addDays("2026-08-01", -1)).toBe("2026-07-31");
+    expect(addDays("2026-07-22T14:00", -1)).toBe("2026-07-21");
   });
 });

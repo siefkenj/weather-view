@@ -13,10 +13,12 @@ import {
   dailySummaries,
   dayList,
   extractHourly,
+  findNowIndex,
   windowByDays,
   type HourlyPoint,
 } from "../utils/series";
-import { dayKey, formatMonthDay } from "../utils/format";
+import { addDays, dayKey, formatMonthDay } from "../utils/format";
+import { computeAqhiSeries } from "../utils/aqhi";
 import type { Place } from "../api/types";
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
@@ -126,6 +128,35 @@ export function Dashboard({ place }: { place: Place }) {
     return recenterBandOnLine(raw, hourly.precipitation);
   }, [ciEnabled, ensembleQ.data, hourly]);
 
+  // Canadian AQHI per hour, aligned to the air-quality series.
+  const aqhi = useMemo(
+    () => (airQ.data ? computeAqhiSeries(airQ.data.hourly) : null),
+    [airQ.data],
+  );
+  const currentAqhi = useMemo(() => {
+    if (!aqhi || !airQ.data || !forecast) return null;
+    const i = findNowIndex(airQ.data.hourly.time, forecast.current.time);
+    return i >= 0 ? aqhi[i] : null;
+  }, [aqhi, airQ.data, forecast]);
+
+  // Hourly temperature from 2am yesterday → 2am tomorrow for the today-panel graph.
+  const miniWindow = useMemo(() => {
+    if (!full || !forecast) return null;
+    const tk = dayKey(forecast.current.time);
+    const start = `${addDays(tk, -1)}T02:00`;
+    const end = `${addDays(tk, 1)}T02:00`;
+    const time: string[] = [];
+    const temperature: number[] = [];
+    for (let i = 0; i < full.time.length; i++) {
+      const t = full.time[i];
+      if (t >= start && t <= end) {
+        time.push(t);
+        temperature.push(full.temperature[i]);
+      }
+    }
+    return time.length > 1 ? { time, temperature } : null;
+  }, [full, forecast]);
+
   if (forecastQ.isLoading && !forecast) {
     return <div className="state state--loading">Loading forecast for {place.name}…</div>;
   }
@@ -219,7 +250,14 @@ export function Dashboard({ place }: { place: Place }) {
 
   return (
     <div className="dashboard">
-      <CurrentConditions place={place} current={forecast.current} today={today} units={state.units} />
+      <CurrentConditions
+        place={place}
+        current={forecast.current}
+        today={today}
+        units={state.units}
+        aqhi={currentAqhi}
+        mini={miniWindow}
+      />
 
       <div className="panel meteogram-panel meteogram-panel--forecast">
         <div className="meteogram-nav">
@@ -292,9 +330,12 @@ export function Dashboard({ place }: { place: Place }) {
       </div>
 
       {airEnabled ? (
-        airQ.data ? (
+        airQ.data && aqhi ? (
           <AirQualityPanel
             data={airQ.data}
+            aqhi={aqhi}
+            startKey={startKey}
+            endKey={endKey}
             nowIso={nowInWindow ? forecast.current.time : `${startKey}T12:00`}
           />
         ) : airQ.isLoading ? (

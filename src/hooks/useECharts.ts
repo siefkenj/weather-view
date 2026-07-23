@@ -38,5 +38,5 @@ export function useECharts(option: EChartsOption | null) {
     }
   }, [option]);
 
-  return containerRef;
+  return { containerRef, chartRef };
 }

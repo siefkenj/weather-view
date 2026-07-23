@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { buildMeteogramOption } from "./meteogramOption";
+import { useEffect, useMemo, useState } from "react";
+import { buildMeteogramOption, meteogramLegend } from "./meteogramOption";
 import { buildVerticalMeteogramOption } from "./meteogramVertical";
 import { ForecastHeader } from "./ForecastHeader";
 import { computeHorizontalLayout, tempTopEmptyFraction } from "./meteogramLayout";
@@ -43,12 +43,14 @@ export function Meteogram({
 }: Props) {
   const { theme } = useTheme();
   const integrated = !vertical && !!daily && daily.length > 0;
+  const palette = chartPalette(theme);
+  const [hovered, setHovered] = useState<string | null>(null);
 
   const option = useMemo(() => {
     const build = vertical ? buildVerticalMeteogramOption : buildMeteogramOption;
     return build({
       hourly,
-      palette: chartPalette(theme),
+      palette,
       units,
       series,
       panels,
@@ -60,7 +62,36 @@ export function Meteogram({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hourly, units, series.join(","), panels.join(","), tempBand, precipBand, nowIso, theme, vertical, integrated]);
 
-  const ref = useECharts(option);
+  const { containerRef: ref, chartRef } = useECharts(option);
+
+  const legend = useMemo(() => meteogramLegend({ series, panels, palette }), [series, panels, palette]);
+
+  // Hovering a line highlights its legend entry (and vice-versa via dispatch).
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const onOver = (p: { componentType?: string; seriesType?: string; seriesName?: string }) => {
+      if (p.componentType === "series" && p.seriesType === "line" && p.seriesName && !p.seriesName.startsWith("_")) {
+        setHovered(p.seriesName);
+      }
+    };
+    const onOut = () => setHovered(null);
+    chart.on("mouseover", onOver);
+    chart.on("mouseout", onOut);
+    return () => {
+      chart.off("mouseover", onOver);
+      chart.off("mouseout", onOut);
+    };
+  }, [chartRef]);
+
+  const enterLegend = (name: string) => {
+    setHovered(name);
+    chartRef.current?.dispatchAction({ type: "highlight", seriesName: name });
+  };
+  const leaveLegend = (name: string) => {
+    setHovered(null);
+    chartRef.current?.dispatchAction({ type: "downplay", seriesName: name });
+  };
 
   const resolvedHeight = vertical
     ? Math.min(Math.max(hourly.time.length * 3.4, 460), 1500)
@@ -86,6 +117,25 @@ export function Meteogram({
       {integrated && band && daily ? (
         <div className="graph-dates" style={{ top: `${band.top}%`, height: `${band.height}%` }}>
           <ForecastHeader summaries={daily} units={units} todayKey={todayKey} />
+        </div>
+      ) : null}
+      {legend.length ? (
+        <div className="chart-legend" role="list">
+          {legend.map((l) => (
+            <button
+              key={l.name}
+              type="button"
+              role="listitem"
+              className={"legend-item" + (hovered === l.name ? " legend-item--on" : "")}
+              onMouseEnter={() => enterLegend(l.name)}
+              onMouseLeave={() => leaveLegend(l.name)}
+              onFocus={() => enterLegend(l.name)}
+              onBlur={() => leaveLegend(l.name)}
+            >
+              <span className="legend-swatch" style={{ background: l.color }} />
+              {l.name}
+            </button>
+          ))}
         </div>
       ) : null}
     </div>
