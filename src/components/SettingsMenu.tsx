@@ -73,8 +73,6 @@ export function SettingsMenu() {
             <LayerControls
               state={state}
               setDays={controls.setDays}
-              toggleSeries={controls.toggleSeries}
-              togglePanel={controls.togglePanel}
               setCi={controls.setCi}
               setUnits={controls.setUnits}
             />

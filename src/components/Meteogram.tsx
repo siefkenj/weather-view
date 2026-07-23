@@ -19,6 +19,8 @@ interface Props {
   tempBand?: Bands | null;
   precipBand?: Bands | null;
   nowIso?: string | null;
+  /** The real current time (always) — hides chance-of-precip for past hours. */
+  currentIso?: string | null;
   height?: number;
   /** Transposed (time runs top-to-bottom) for small portrait screens. */
   vertical?: boolean;
@@ -26,21 +28,12 @@ interface Props {
    *  in the headroom at the top of the temperature panel. */
   daily?: DailySummary[];
   todayKey?: string;
+  /** Series names hidden via the legend. */
+  hidden?: string[];
+  /** AQHI per hour (aligned to hourly.time) for the integrated air-quality panel. */
+  aqhi?: (number | null)[];
 }
 
-// Base line widths per series (must match buildMeteogramOption). Hovering a line
-// bumps only that one by HOVER_BOOST; everything else stays at its base width.
-const BASE_WIDTH: Record<string, number> = {
-  Temperature: 2,
-  "Feels like": 1.6,
-  "Dew point": 1.6,
-  "Wet bulb": 1.6,
-  Enthalpy: 1.6,
-  "Chance of precip": 1.6,
-  "Cloud cover": 0,
-  Humidity: 1.8,
-  Pressure: 1.8,
-};
 const HOVER_BOOST = 1.8;
 
 export function Meteogram({
@@ -51,14 +44,19 @@ export function Meteogram({
   tempBand,
   precipBand,
   nowIso,
+  currentIso,
   height = 520,
   vertical = false,
   daily,
   todayKey,
+  hidden,
+  aqhi,
 }: Props) {
   const { theme } = useTheme();
   const integrated = !vertical && !!daily && daily.length > 0;
   const palette = chartPalette(theme);
+  // Drop the air panel when there's no AQHI data for this window.
+  const effPanels = aqhi ? panels : panels.filter((p) => p !== "air");
   // Which line the cursor is on. A ref (not state) so hovering never re-renders
   // React; the tooltip formatter reads it live to bold the matching row.
   const hoveredRef = useRef<string | null>(null);
@@ -71,17 +69,29 @@ export function Meteogram({
       palette,
       units,
       series,
-      panels,
+      panels: effPanels,
       tempBand,
       precipBand,
       nowIso,
+      currentIso,
       headroom: integrated,
       getHovered,
+      hidden,
+      aqhi,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hourly, units, series.join(","), panels.join(","), tempBand, precipBand, nowIso, theme, vertical, integrated]);
+  }, [hourly, units, series.join(","), effPanels.join(","), tempBand, precipBand, nowIso, currentIso, theme, vertical, integrated, (hidden ?? []).join(","), aqhi]);
 
   const { containerRef: ref, chartRef } = useECharts(option);
+
+  // Each series' own base line width, keyed by index — so split past/future
+  // lines (thin vs thick) each revert to their own width after a hover.
+  const baseWidths = useMemo(
+    () => ((option.series as { lineStyle?: { width?: number } }[]) ?? []).map((s) => s?.lineStyle?.width),
+    [option],
+  );
+  const baseWidthsRef = useRef(baseWidths);
+  baseWidthsRef.current = baseWidths;
 
   // Bold only the hovered line by merging its lineStyle width — ECharts' own
   // emphasis is disabled (the axis tooltip would otherwise bold every series).
@@ -89,10 +99,11 @@ export function Meteogram({
     const chart = chartRef.current;
     if (!chart) return;
     const current = (chart.getOption().series ?? []) as { type?: string; name?: string }[];
-    const patch = current.map((s) => {
-      const base = s.name ? BASE_WIDTH[s.name] : undefined;
+    const bw = baseWidthsRef.current;
+    const patch = current.map((s, i) => {
+      const base = bw[i];
       if (s.type !== "line" || base == null) return {};
-      return { lineStyle: { width: name === s.name ? base + HOVER_BOOST : base } };
+      return { lineStyle: { width: name && s.name === name ? base + HOVER_BOOST : base } };
     });
     chart.setOption({ series: patch });
   }, [chartRef]);
@@ -131,9 +142,9 @@ export function Meteogram({
   // Where the on-graph tiles sit: the empty band at the top of the temp panel.
   const band = useMemo(() => {
     if (!integrated) return null;
-    const temp = computeHorizontalLayout(panels).grids[0];
+    const temp = computeHorizontalLayout(effPanels).grids[0];
     return { top: temp.top, height: temp.height * tempTopEmptyFraction() };
-  }, [integrated, panels]);
+  }, [integrated, effPanels]);
 
   return (
     <div className="meteogram-graph" style={{ position: "relative" }}>

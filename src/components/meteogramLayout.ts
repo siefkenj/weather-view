@@ -4,14 +4,14 @@
 
 import type { PanelKey } from "../hooks/useUrlState";
 
-export type PanelName = "temp" | "precip" | "atmo";
+export type PanelName = "temp" | "precip" | "atmo" | "air";
 
 export interface HorizontalLayout {
   panelKeys: PanelName[];
   grids: { top: number; height: number }[];
 }
 
-const WEIGHTS: Record<PanelName, number> = { temp: 2.3, precip: 1, atmo: 1.15 };
+const WEIGHTS: Record<PanelName, number> = { temp: 2.3, precip: 1, atmo: 1.15, air: 1 };
 
 // Extra range added to the temperature y-axis so the top of the panel is empty
 // — that's where the on-graph date/icon overlay sits, clear of the lines.
@@ -27,6 +27,7 @@ export function computeHorizontalLayout(panels: PanelKey[]): HorizontalLayout {
     "temp",
     ...(panels.includes("precip") ? (["precip"] as const) : []),
     ...(panels.includes("atmo") ? (["atmo"] as const) : []),
+    ...(panels.includes("air") ? (["air"] as const) : []),
   ];
 
   const topPad = 3;

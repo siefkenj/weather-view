@@ -11,6 +11,7 @@
   --radius: 14px;
   --hi: #e03131;
   --lo: #4dabf7;
+  --feels: #c2255c;
 
   color-scheme: light;
 }
@@ -27,6 +28,7 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.35);
   --hi: #ff6b6b;
   --lo: #74c0fc;
+  --feels: #f06595;
 
   color-scheme: dark;
 }
@@ -293,8 +295,9 @@ button {
   font-weight: 600;
   color: var(--text-dim);
 }
-/* Compact temperature trace (2am yesterday → 2am tomorrow), inline among the
-   other indices at ~2× their width, with today's high/low marked on the curve. */
+/* Compact temperature trace over one 2am→2am day, inline among the other indices
+   at ~2× their width: solar-lit background, actual (solid) past vs forecast (faded)
+   future, today's high/low, and a dashed "feels like" line where it diverges. */
 .fact--graph {
   grid-column: span 2;
   gap: 2px;
@@ -304,15 +307,35 @@ button {
   width: 100%;
   height: auto;
 }
+/* Past temperature is a thin line; the forecast is thick. */
 .temp-mini__line {
   stroke: var(--hi);
-  stroke-width: 1.75;
+  stroke-width: 1.1;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+.temp-mini__line--forecast {
+  stroke-width: 2.1;
+}
+.temp-mini__feels {
+  stroke: var(--feels);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.temp-mini__feels--forecast {
+  stroke-width: 1.8;
 }
 .temp-mini__now {
   stroke: var(--text-dim);
   stroke-dasharray: 3 3;
+}
+/* White outline behind the high/low markers so they read over any shade. */
+.temp-mini__dot {
+  stroke: #fff;
+  stroke-width: 1.4;
+  paint-order: stroke;
 }
 .temp-mini__dot--hi {
   fill: var(--hi);
@@ -323,6 +346,9 @@ button {
 .temp-mini__lbl {
   font-size: 11px;
   font-weight: 700;
+  stroke: #fff;
+  stroke-width: 3;
+  paint-order: stroke;
 }
 .temp-mini__lbl--hi {
   fill: var(--hi);
@@ -803,10 +829,25 @@ button {
   font-size: 12px;
   font-weight: 600;
 }
+/* Legend entries toggle their series. Hidden series show a hollow (outline) swatch. */
+.legend-item--btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.legend-item--btn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.legend-item--off {
+  opacity: 0.55;
+}
 .legend-swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background: transparent;
   flex: none;
 }
 .ci-note {

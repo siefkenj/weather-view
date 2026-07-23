@@ -8,7 +8,7 @@ describe("parseState", () => {
     const s = parse("");
     expect(s.days).toBe(10);
     expect(s.offset).toBe(0);
-    expect(s.series).toEqual(["temp", "feels", "dew"]);
+    expect(s.series).toEqual(["temp", "feels"]);
     expect(s.panels).toEqual(["precip", "atmo", "air"]);
     expect(s.ci).toBe(false);
     expect(s.units).toBe("metric");

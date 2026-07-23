@@ -90,11 +90,6 @@ export function buildVerticalMeteogramOption(input: MeteogramInput): EChartsOpti
   const seriesList: SeriesOption[] = [];
   const shade = dayShadeMarkArea(time, palette, "yAxis");
   const firstOfCol = new Set<number>();
-  const withShade = (gi: number) => {
-    const attach = !firstOfCol.has(gi);
-    firstOfCol.add(gi);
-    return attach ? { markArea: shade } : {};
-  };
 
   // Temperature confidence band (stacked along the value/x axis).
   if (tempBand && series.includes("temp")) {
@@ -114,49 +109,69 @@ export function buildVerticalMeteogramOption(input: MeteogramInput): EChartsOpti
       }
     : undefined;
 
-  const lineV = (
+  const nowHv = input.currentIso ? input.currentIso.slice(0, 13) : null;
+  const thinWv = (w: number) => Math.max(0.6, w * 0.5);
+
+  // Push a line split into a thin "past" and a thick "forecast" segment.
+  const pushLineV = (
     name: string,
     vals: number[],
     color: string,
     gi: number,
     xi: number,
+    baseWidth: number,
     extra: Partial<SeriesOption> = {},
-  ): SeriesOption =>
-    ({
-      name,
-      type: "line",
-      data: pair(vals),
-      xAxisIndex: xi,
-      yAxisIndex: gi,
-      showSymbol: false,
-      smooth: 0.2,
-      lineStyle: { color, width: 2 },
-      itemStyle: { color },
-      ...withShade(gi),
-      ...extra,
-    }) as SeriesOption;
+  ) => {
+    const { lineStyle: exLine, ...rest } = extra as Partial<SeriesOption> & {
+      lineStyle?: Record<string, unknown>;
+    };
+    const attach = !firstOfCol.has(gi);
+    firstOfCol.add(gi);
+    const mk = (v: number[], width: number, shadeIt: boolean): SeriesOption =>
+      ({
+        name,
+        type: "line",
+        data: pair(v),
+        xAxisIndex: xi,
+        yAxisIndex: gi,
+        showSymbol: false,
+        smooth: 0.2,
+        connectNulls: false,
+        lineStyle: { ...(exLine ?? {}), color, width },
+        itemStyle: { color },
+        ...(shadeIt ? { markArea: shade } : {}),
+        ...rest,
+      }) as SeriesOption;
+    const past = nowHv ? vals.map((v, i) => (time[i].slice(0, 13) <= nowHv ? v : NaN)) : vals;
+    seriesList.push(mk(past, thinWv(baseWidth), attach));
+    if (nowHv) {
+      const fut = vals.map((v, i) => (time[i].slice(0, 13) >= nowHv ? v : NaN));
+      seriesList.push(mk(fut, baseWidth, false));
+    }
+  };
 
   if (series.includes("temp")) {
-    seriesList.push(
-      lineV("Temperature", hourly.temperature.map((v) => round1(cToDisplay(v, units))), palette.temp, colIndex.temp, xIdx.temp, {
-        z: 5,
-        ...(nowMark ? { markLine: nowMark } : {}),
-      }),
-    );
+    pushLineV("Temperature", hourly.temperature.map((v) => round1(cToDisplay(v, units))), palette.temp, colIndex.temp, xIdx.temp, 2, {
+      z: 5,
+      ...(nowMark ? { markLine: nowMark } : {}),
+    });
   }
   if (series.includes("feels")) {
-    seriesList.push(lineV("Feels like", hourly.apparent.map((v) => round1(cToDisplay(v, units))), palette.feels, colIndex.temp, xIdx.temp, { lineStyle: { color: palette.feels, width: 1.6 } }));
+    const feelsData = hourly.apparent.map((v, i) =>
+      Math.abs(hourly.apparent[i] - hourly.temperature[i]) > 2 ? round1(cToDisplay(v, units)) : NaN,
+    );
+    pushLineV("Feels like", feelsData, palette.feels, colIndex.temp, xIdx.temp, 1.6, { lineStyle: { type: "dashed" } });
   }
   if (series.includes("dew")) {
-    seriesList.push(lineV("Dew point", hourly.dewPoint.map((v) => round1(cToDisplay(v, units))), palette.dew, colIndex.temp, xIdx.temp, { lineStyle: { color: palette.dew, width: 1.6 } }));
+    pushLineV("Dew point", hourly.dewPoint.map((v) => round1(cToDisplay(v, units))), palette.dew, colIndex.temp, xIdx.temp, 1.6);
   }
   if (series.includes("wetbulb")) {
     const wb = hourly.temperature.map((t, i) => round1(cToDisplay(wetBulbTemperature(t, hourly.humidity[i], hourly.pressure[i]), units)));
-    seriesList.push(lineV("Wet bulb", wb, palette.wetbulb, colIndex.temp, xIdx.temp, { lineStyle: { color: palette.wetbulb, width: 1.6 } }));
+    pushLineV("Wet bulb", wb, palette.wetbulb, colIndex.temp, xIdx.temp, 1.6);
   }
   if (series.includes("enthalpy")) {
     const en = hourly.temperature.map((t, i) => round1(moistAirEnthalpy(t, hourly.humidity[i], hourly.pressure[i])));
-    seriesList.push(lineV("Enthalpy", en, palette.enthalpy, colIndex.temp, xIdx.enthalpy, { lineStyle: { color: palette.enthalpy, width: 1.6 } }));
+    pushLineV("Enthalpy", en, palette.enthalpy, colIndex.temp, xIdx.enthalpy, 1.6);
   }
 
   if (showPrecip) {
@@ -168,14 +183,16 @@ export function buildVerticalMeteogramOption(input: MeteogramInput): EChartsOpti
     }
     firstOfCol.add(colIndex.precip);
     seriesList.push({ name: "Precipitation", type: "bar", data: pair(hourly.precipitation.map(round1)), xAxisIndex: xIdx.precip, yAxisIndex: colIndex.precip, itemStyle: { color: palette.precip }, barMaxWidth: 5, z: 3 });
-    seriesList.push({ name: "Chance of precip", type: "line", data: pair(hourly.precipProbability), xAxisIndex: xIdx.prob, yAxisIndex: colIndex.precip, showSymbol: false, smooth: 0.2, lineStyle: { color: palette.precipProb, width: 1.4 }, itemStyle: { color: palette.precipProb } });
+    const cur = input.currentIso ?? null;
+    const probData = hourly.precipProbability.map((v, i) => (cur && time[i] < cur ? NaN : v));
+    pushLineV("Chance of precip", probData, palette.precipProb, colIndex.precip, xIdx.prob, 1.4);
   }
 
   if (showAtmo) {
     firstOfCol.add(colIndex.atmo);
     seriesList.push({ name: "Cloud cover", type: "line", data: pair(hourly.cloudCover), xAxisIndex: xIdx.pct, yAxisIndex: colIndex.atmo, showSymbol: false, smooth: 0.2, lineStyle: { width: 0, color: palette.cloud }, areaStyle: { color: palette.cloud }, z: 1 });
-    seriesList.push({ name: "Humidity", type: "line", data: pair(hourly.humidity), xAxisIndex: xIdx.pct, yAxisIndex: colIndex.atmo, showSymbol: false, smooth: 0.2, lineStyle: { color: palette.humidity, width: 1.6 }, itemStyle: { color: palette.humidity } });
-    seriesList.push({ name: "Pressure", type: "line", data: pair(hourly.pressure.map(round1)), xAxisIndex: xIdx.pressure, yAxisIndex: colIndex.atmo, showSymbol: false, smooth: 0.2, lineStyle: { color: palette.pressure, width: 1.6 }, itemStyle: { color: palette.pressure } });
+    pushLineV("Humidity", hourly.humidity, palette.humidity, colIndex.atmo, xIdx.pct, 1.6);
+    pushLineV("Pressure", hourly.pressure.map(round1), palette.pressure, colIndex.atmo, xIdx.pressure, 1.6);
   }
 
   const unitFor: Record<string, string> = {
@@ -200,11 +217,13 @@ export function buildVerticalMeteogramOption(input: MeteogramInput): EChartsOpti
     formatter: (params: unknown) => {
       const arr = params as { seriesName: string; value: unknown; color: string; axisValue: string }[];
       if (!arr.length) return "";
+      const seen = new Set<string>();
       const rows = arr
         .filter((p) => !p.seriesName.startsWith("_"))
         .map((p) => {
           const scalar = Array.isArray(p.value) ? (p.value[0] as number) : (p.value as number);
-          if (scalar == null || !Number.isFinite(scalar)) return "";
+          if (scalar == null || !Number.isFinite(scalar) || seen.has(p.seriesName)) return "";
+          seen.add(p.seriesName);
           const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px"></span>`;
           return `<div style="display:flex;justify-content:space-between;gap:16px"><span>${dot}${p.seriesName}</span><b>${scalar}${unitFor[p.seriesName] ?? ""}</b></div>`;
         })

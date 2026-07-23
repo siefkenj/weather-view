@@ -19,7 +19,7 @@ export const DEFAULT_WINDOW_DAYS = 10;
 export const ALL_SERIES: SeriesKey[] = ["temp", "feels", "dew", "wetbulb", "enthalpy"];
 export const ALL_PANELS: PanelKey[] = ["precip", "atmo", "air"];
 
-const DEFAULT_SERIES: SeriesKey[] = ["temp", "feels", "dew"];
+const DEFAULT_SERIES: SeriesKey[] = ["temp", "feels"];
 
 export interface DashboardState {
   /** Visible window width, in days. */

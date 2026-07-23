@@ -78,13 +78,18 @@ export function Dashboard({ place }: { place: Place }) {
   const { theme } = useTheme();
   const isNarrow = useMediaQuery("(max-width: 640px)");
   const portrait = useMediaQuery("(max-width: 640px) and (orientation: portrait)");
-  const legend = useMemo(
-    () => meteogramLegend({ series: state.series, panels: state.panels, palette: chartPalette(theme) }),
-    [state.series, state.panels, theme],
-  );
   const animRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   const [clipping, setClipping] = useState(false);
+  // Panel sub-lines hidden via the legend (temperature series use state.series).
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+  const toggleHidden = (name: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
 
   const windowDays = state.days;
   const offset = state.offset;
@@ -147,23 +152,56 @@ export function Dashboard({ place }: { place: Place }) {
     return i >= 0 ? aqhi[i] : null;
   }, [aqhi, airQ.data, forecast]);
 
-  // Hourly temperature from 2am yesterday → 2am tomorrow for the today-panel graph.
+  // The current weather day (2am → 2am) that contains "now", for the today-panel
+  // graph. Before 2am the day belongs to the previous calendar date.
   const miniWindow = useMemo(() => {
     if (!full || !forecast) return null;
-    const tk = dayKey(forecast.current.time);
-    const start = `${addDays(tk, -1)}T02:00`;
-    const end = `${addDays(tk, 1)}T02:00`;
+    const nowIsoTime = forecast.current.time;
+    const dayStart =
+      Number(nowIsoTime.slice(11, 13)) < 2 ? addDays(dayKey(nowIsoTime), -1) : dayKey(nowIsoTime);
+    const start = `${dayStart}T02:00`;
+    const end = `${addDays(dayStart, 1)}T02:00`;
     const time: string[] = [];
     const temperature: number[] = [];
+    const apparent: number[] = [];
     for (let i = 0; i < full.time.length; i++) {
       const t = full.time[i];
       if (t >= start && t <= end) {
         time.push(t);
         temperature.push(full.temperature[i]);
+        apparent.push(full.apparent[i]);
       }
     }
-    return time.length > 1 ? { time, temperature } : null;
-  }, [full, forecast]);
+    const daySummary = summaries.find((s) => s.date === dayStart);
+    return time.length > 1
+      ? { time, temperature, apparent, dayKey: dayStart, sunrise: daySummary?.sunrise, sunset: daySummary?.sunset }
+      : null;
+  }, [full, forecast, summaries]);
+
+  // AQHI aligned to the meteogram window's hourly timestamps, for the stacked
+  // air-quality panel. Undefined when the window has no air-quality coverage.
+  const aqhiWindow = useMemo(() => {
+    if (!airEnabled || !aqhi || !airQ.data || !hourly) return undefined;
+    const idx = new Map(airQ.data.hourly.time.map((t, i) => [t, i]));
+    const aligned = hourly.time.map((t) => {
+      const i = idx.get(t);
+      return i != null && Number.isFinite(aqhi[i]) ? aqhi[i] : null;
+    });
+    return aligned.some((v) => v != null) ? aligned : undefined;
+  }, [airEnabled, aqhi, airQ.data, hourly]);
+
+  const legend = useMemo(
+    () => meteogramLegend({ panels: state.panels, palette: chartPalette(theme), hasAir: !!aqhiWindow }),
+    [state.panels, theme, aqhiWindow],
+  );
+  // A panel is drawn only while at least one of its lines is shown (the legend is
+  // now the only control — the settings chips are gone), and air needs its data.
+  const chartPanels = state.panels.filter((p) => {
+    if (p === "precip") return !hidden.has("Precipitation") || !hidden.has("Chance of precip");
+    if (p === "atmo") return !hidden.has("Cloud cover") || !hidden.has("Humidity") || !hidden.has("Pressure");
+    if (p === "air") return !!aqhiWindow && !hidden.has("Air quality");
+    return true;
+  });
 
   if (forecastQ.isLoading && !forecast) {
     return <div className="state state--loading">Loading forecast for {place.name}…</div>;
@@ -303,13 +341,16 @@ export function Dashboard({ place }: { place: Place }) {
                   hourly={hourly!}
                   units={state.units}
                   series={state.series}
-                  panels={state.panels}
+                  panels={chartPanels}
                   tempBand={tempBand}
                   precipBand={precipBand}
                   nowIso={nowIso}
+                  currentIso={forecast.current.time}
                   vertical={portrait}
                   daily={integrated ? windowSummaries : undefined}
                   todayKey={todayKey}
+                  hidden={[...hidden]}
+                  aqhi={aqhiWindow}
                 />
               ) : (
                 emptyState
@@ -330,13 +371,28 @@ export function Dashboard({ place }: { place: Place }) {
         </div>
 
         {legend.length ? (
-          <div className="chart-legend" role="list">
-            {legend.map((l) => (
-              <span key={l.name} role="listitem" className="legend-item">
-                <span className="legend-swatch" style={{ background: l.color }} />
-                {l.name}
-              </span>
-            ))}
+          <div className="chart-legend" role="group" aria-label="Show or hide chart series">
+            {legend.map((l) => {
+              const active = l.kind === "series" ? state.series.includes(l.seriesKey) : !hidden.has(l.name);
+              const onClick = () =>
+                l.kind === "series" ? controls.toggleSeries(l.seriesKey) : toggleHidden(l.name);
+              return (
+                <button
+                  key={l.name}
+                  type="button"
+                  className={"legend-item legend-item--btn" + (active ? "" : " legend-item--off")}
+                  aria-pressed={active}
+                  title={`${l.help}\n\n(${active ? "click to hide" : "click to show"})`}
+                  onClick={onClick}
+                >
+                  <span
+                    className="legend-swatch"
+                    style={active ? { background: l.color, borderColor: l.color } : { borderColor: l.color }}
+                  />
+                  {l.name}
+                </button>
+              );
+            })}
           </div>
         ) : null}
 
@@ -353,8 +409,6 @@ export function Dashboard({ place }: { place: Place }) {
           <AirQualityPanel
             data={airQ.data}
             aqhi={aqhi}
-            startKey={startKey}
-            endKey={endKey}
             nowIso={nowInWindow ? forecast.current.time : `${startKey}T12:00`}
           />
         ) : airQ.isLoading ? (

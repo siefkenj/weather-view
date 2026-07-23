@@ -97,4 +97,41 @@ describe("buildMeteogramOption", () => {
     // ~18°C sample should land in a Fahrenheit range well above 32.
     expect(Math.max(...temp!.data)).toBeGreaterThan(50);
   });
+
+  it("adds an AQHI air panel (with band-coloring visualMap) when aqhi data is supplied", () => {
+    const aqhi = base.hourly.time.map((_, i) => 2 + (i % 6));
+    const opt = buildMeteogramOption({ ...base, series: ["temp"], panels: ["air"], aqhi });
+    expect(opt.grid).toHaveLength(2); // temp + air
+    expect(seriesNames(opt)).toContain("Air quality");
+    expect(opt.visualMap).toBeTruthy();
+  });
+
+  it("omits the air panel when no aqhi data is supplied", () => {
+    const opt = buildMeteogramOption({ ...base, series: ["temp"], panels: ["air"] });
+    expect(opt.grid).toHaveLength(1); // temp only
+    expect(seriesNames(opt)).not.toContain("Air quality");
+  });
+
+  it("shows chance-of-precip only from the current time forward", () => {
+    const opt = buildMeteogramOption({
+      ...base,
+      series: ["temp"],
+      panels: ["precip"],
+      currentIso: "2026-07-22T12:00",
+    });
+    // Past/forecast split → the forecast segment is the last "Chance of precip".
+    const probs = (opt.series as { name: string; data: number[] }[]).filter((s) => s.name === "Chance of precip");
+    const fut = probs[probs.length - 1];
+    // Sample runs 2026-07-22T00:00…; hours before noon must be blanked (NaN).
+    expect(Number.isNaN(fut.data[0])).toBe(true);
+    expect(Number.isFinite(fut.data[base.hourly.time.length - 1])).toBe(true);
+  });
+
+  it("splits temperature into a thin past and a thick forecast line at currentIso", () => {
+    const opt = buildMeteogramOption({ ...base, series: ["temp"], panels: [], currentIso: "2026-07-22T12:00" });
+    const temps = (opt.series as { name: string; lineStyle?: { width?: number } }[]).filter((s) => s.name === "Temperature");
+    expect(temps).toHaveLength(2);
+    const widths = temps.map((s) => s.lineStyle?.width ?? 0).sort((a, b) => a - b);
+    expect(widths[0]).toBeLessThan(widths[1]); // past thinner than forecast
+  });
 });

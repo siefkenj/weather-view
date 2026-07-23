@@ -13,7 +13,16 @@ import { moistAirEnthalpy, wetBulbTemperature } from "../utils/psychro";
 import { formatDayShort, formatTime } from "../utils/format";
 import { dayShadeMarkArea } from "./meteogramShading";
 import { computeHorizontalLayout, TEMP_HEADROOM } from "./meteogramLayout";
+import { aqhiCategory } from "../utils/aqhi";
 import type { HourlyPoint } from "../utils/series";
+
+// AQHI risk-band colours for the integrated air-quality panel.
+const AQHI_BANDS = {
+  low: aqhiCategory(2).color,
+  moderate: aqhiCategory(5).color,
+  high: aqhiCategory(8).color,
+  veryHigh: aqhiCategory(11).color,
+};
 
 export interface MeteogramInput {
   hourly: HourlyPoint;
@@ -24,10 +33,16 @@ export interface MeteogramInput {
   tempBand?: Bands | null;
   precipBand?: Bands | null;
   nowIso?: string | null;
+  /** The real current time (always), used to hide chance-of-precip for past hours. */
+  currentIso?: string | null;
   /** Add empty space at the top of the temp panel for the on-graph day tiles. */
   headroom?: boolean;
   /** Live accessor for the currently hovered series name (bolded in the tooltip). */
   getHovered?: () => string | null;
+  /** Series names hidden via the legend (their lines are not drawn). */
+  hidden?: string[];
+  /** AQHI per hour, aligned to hourly.time, for the integrated air-quality panel. */
+  aqhi?: (number | null)[];
 }
 
 const round1 = (n: number) => (Number.isFinite(n) ? Math.round(n * 10) / 10 : NaN);
@@ -35,12 +50,17 @@ const round1 = (n: number) => (Number.isFinite(n) ? Math.round(n * 10) / 10 : Na
 export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   const { hourly, palette, units, series, panels, tempBand, precipBand, nowIso } = input;
   const time = hourly.time;
+  const hiddenSet = new Set(input.hidden ?? []);
+  const isHidden = (name: string) => hiddenSet.has(name);
 
   const showPrecip = panels.includes("precip");
   const showAtmo = panels.includes("atmo");
+  const showAir = panels.includes("air") && Array.isArray(input.aqhi);
 
   // ---- Panel layout (percentages) --------------------------------------
-  const { panelKeys: panelList, grids: gridBoxes } = computeHorizontalLayout(panels);
+  // The air panel is only laid out when it has data to draw.
+  const layoutPanels = showAir ? panels : panels.filter((p) => p !== "air");
+  const { panelKeys: panelList, grids: gridBoxes } = computeHorizontalLayout(layoutPanels);
 
   const grids: EChartsOption["grid"] = gridBoxes.map((g) => ({
     left: 56,
@@ -85,17 +105,25 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     axisLabel: { color: palette.axisLabel },
   });
 
+  // A thick gridline + label every 5 °C (10 °F), and a thin gridline every 1 °C (2 °F).
+  const gridStep = units === "imperial" ? 2 : 1;
+  const labelStep = units === "imperial" ? 10 : 5;
   pushY("temp", {
     ...yBase(gridIndex.temp),
     name: input.headroom ? "" : tempUnit(units),
     nameTextStyle: { color: palette.axisLabel },
     scale: true,
+    interval: labelStep,
+    splitLine: { lineStyle: { color: palette.splitLine, width: 1.5 } },
+    minorTick: { show: false, splitNumber: Math.round(labelStep / gridStep) },
+    minorSplitLine: { show: true, lineStyle: { color: palette.splitLine, width: 0.5 } },
     ...(input.headroom
       ? {
-          min: (v: { min: number; max: number }) => v.min - (v.max - v.min) * TEMP_HEADROOM.bottom,
-          max: (v: { min: number; max: number }) => v.max + (v.max - v.min) * TEMP_HEADROOM.top,
-          // Explicit range disables "nice" endpoints, so hide the ragged
-          // boundary labels and keep only the clean interior ticks.
+          // Snap the padded range to whole label steps so labels stay clean.
+          min: (v: { min: number; max: number }) =>
+            Math.floor((v.min - (v.max - v.min) * TEMP_HEADROOM.bottom) / labelStep) * labelStep,
+          max: (v: { min: number; max: number }) =>
+            Math.ceil((v.max + (v.max - v.min) * TEMP_HEADROOM.top) / labelStep) * labelStep,
           axisLabel: { color: palette.axisLabel, showMinLabel: false, showMaxLabel: false },
         }
       : {}),
@@ -122,44 +150,75 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     pushY("pct", { ...yBase(gridIndex.atmo), min: 0, max: 100, axisLabel: { color: palette.axisLabel, formatter: "{value}%" } });
     pushY("pressure", { ...yBase(gridIndex.atmo), position: "right", scale: true, splitLine: { show: false }, axisLabel: { color: palette.pressure, formatter: "{value}" } });
   }
+  const aqhiFinite = showAir ? (input.aqhi!.filter((v) => v != null && Number.isFinite(v)) as number[]) : [];
+  const aqhiMax = Math.min(11, Math.max(4, Math.ceil(Math.max(1, ...aqhiFinite)) + 1));
+  if (showAir) {
+    pushY("aqhi", {
+      ...yBase(gridIndex.air),
+      name: "AQHI",
+      min: 0,
+      max: aqhiMax,
+      interval: Math.max(1, Math.round(aqhiMax / 4)),
+      nameTextStyle: { color: palette.axisLabel },
+    });
+  }
 
   // ---- Series ----------------------------------------------------------
   const seriesList: SeriesOption[] = [];
   const shade = dayShadeMarkArea(time, palette, "xAxis");
   const firstOfPanel = new Set<number>();
-  // Emphasis off everywhere (see the line() helper); hover bolding is manual.
+  // Emphasis off everywhere; hover bolding is manual.
   const lineEmph = { disabled: true as const };
+  const nowH = input.currentIso ? input.currentIso.slice(0, 13) : null;
+  const thinW = (w: number) => Math.max(0.6, w * 0.5);
 
-  const line = (
+  // Push a line split into a thin "past" (already happened) segment and a thick
+  // "forecast" segment; both share the series name. The first line in a panel
+  // carries the day-shading markArea. Returns the pushed series indices.
+  const pushLine = (
     name: string,
     data: number[],
     color: string,
     gi: number,
     yi: number,
+    baseWidth: number,
     extra: Partial<SeriesOption> = {},
-  ): SeriesOption => {
-    const attachShade = !firstOfPanel.has(gi);
+  ): number[] => {
+    const { lineStyle: exLine, ...rest } = extra as Partial<SeriesOption> & {
+      lineStyle?: Record<string, unknown>;
+    };
+    const withShade = !firstOfPanel.has(gi);
     firstOfPanel.add(gi);
-    return {
-      name,
-      type: "line",
-      data,
-      xAxisIndex: gi,
-      yAxisIndex: yi,
-      showSymbol: false,
-      smooth: 0.2,
-      lineStyle: { color, width: 2 },
-      itemStyle: { color },
-      // ECharts emphasis is disabled: the axis tooltip would otherwise bold every
-      // series at once. The one hovered line is thickened imperatively instead.
-      emphasis: { disabled: true },
-      ...(attachShade ? { markArea: shade } : {}),
-      ...extra,
-    } as SeriesOption;
+    const mk = (d: number[], width: number, shadeIt: boolean): SeriesOption =>
+      ({
+        name,
+        type: "line",
+        data: d,
+        xAxisIndex: gi,
+        yAxisIndex: yi,
+        showSymbol: false,
+        smooth: 0.2,
+        connectNulls: false,
+        lineStyle: { ...(exLine ?? {}), color, width },
+        itemStyle: { color },
+        emphasis: { disabled: true },
+        ...(shadeIt ? { markArea: shade } : {}),
+        ...rest,
+      }) as SeriesOption;
+    const indices: number[] = [];
+    const past = nowH ? data.map((v, i) => (time[i].slice(0, 13) <= nowH ? v : NaN)) : data;
+    indices.push(seriesList.length);
+    seriesList.push(mk(past, thinW(baseWidth), withShade));
+    if (nowH) {
+      const fut = data.map((v, i) => (time[i].slice(0, 13) >= nowH ? v : NaN));
+      indices.push(seriesList.length);
+      seriesList.push(mk(fut, baseWidth, false));
+    }
+    return indices;
   };
 
   // Temperature confidence band (drawn under the lines).
-  if (tempBand && series.includes("temp")) {
+  if (tempBand && series.includes("temp") && !isHidden("Temperature")) {
     const lo = tempBand.lower.map((v) => round1(cToDisplay(v, units)));
     const width = tempBand.upper.map((v, i) => round1(cToDisplay(v, units) - cToDisplay(tempBand.lower[i], units)));
     seriesList.push({
@@ -197,103 +256,97 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       }
     : undefined;
 
-  if (series.includes("temp")) {
-    seriesList.push(
-      line("Temperature", hourly.temperature.map((v) => round1(cToDisplay(v, units))), palette.temp, gridIndex.temp, yIdx.temp, {
-        z: 5,
-        ...(nowMark ? { markLine: nowMark } : {}),
-      }),
+  if (series.includes("temp") && !isHidden("Temperature")) {
+    pushLine("Temperature", hourly.temperature.map((v) => round1(cToDisplay(v, units))), palette.temp, gridIndex.temp, yIdx.temp, 2, {
+      z: 5,
+      ...(nowMark ? { markLine: nowMark } : {}),
+    });
+  }
+  if (series.includes("feels") && !isHidden("Feels like")) {
+    // Dashed, and only where it diverges from the temperature by > 2 °C.
+    const feelsData = hourly.apparent.map((v, i) =>
+      Math.abs(hourly.apparent[i] - hourly.temperature[i]) > 2 ? round1(cToDisplay(v, units)) : NaN,
     );
+    pushLine("Feels like", feelsData, palette.feels, gridIndex.temp, yIdx.temp, 1.6, { lineStyle: { type: "dashed" } });
   }
-  if (series.includes("feels")) {
-    seriesList.push(line("Feels like", hourly.apparent.map((v) => round1(cToDisplay(v, units))), palette.feels, gridIndex.temp, yIdx.temp, { lineStyle: { color: palette.feels, width: 1.6, type: "solid" } }));
+  if (series.includes("dew") && !isHidden("Dew point")) {
+    pushLine("Dew point", hourly.dewPoint.map((v) => round1(cToDisplay(v, units))), palette.dew, gridIndex.temp, yIdx.temp, 1.6);
   }
-  if (series.includes("dew")) {
-    seriesList.push(line("Dew point", hourly.dewPoint.map((v) => round1(cToDisplay(v, units))), palette.dew, gridIndex.temp, yIdx.temp, { lineStyle: { color: palette.dew, width: 1.6 } }));
-  }
-  if (series.includes("wetbulb")) {
+  if (series.includes("wetbulb") && !isHidden("Wet bulb")) {
     const wb = hourly.temperature.map((t, i) => round1(cToDisplay(wetBulbTemperature(t, hourly.humidity[i], hourly.pressure[i]), units)));
-    seriesList.push(line("Wet bulb", wb, palette.wetbulb, gridIndex.temp, yIdx.temp, { lineStyle: { color: palette.wetbulb, width: 1.6 } }));
+    pushLine("Wet bulb", wb, palette.wetbulb, gridIndex.temp, yIdx.temp, 1.6);
   }
-  if (series.includes("enthalpy")) {
+  if (series.includes("enthalpy") && !isHidden("Enthalpy")) {
     const en = hourly.temperature.map((t, i) => round1(moistAirEnthalpy(t, hourly.humidity[i], hourly.pressure[i])));
-    seriesList.push(line("Enthalpy", en, palette.enthalpy, gridIndex.temp, yIdx.enthalpy, { lineStyle: { color: palette.enthalpy, width: 1.6 } }));
+    pushLine("Enthalpy", en, palette.enthalpy, gridIndex.temp, yIdx.enthalpy, 1.6);
   }
 
   // Precipitation panel.
   if (showPrecip) {
-    if (precipBand) {
+    if (precipBand && !isHidden("Precipitation")) {
       const lo = precipBand.lower.map((v) => round1(Math.max(0, v)));
       const width = precipBand.upper.map((v, i) => round1(Math.max(0, v) - Math.max(0, precipBand.lower[i])));
       seriesList.push({ name: "_precipLo", type: "line", data: lo, xAxisIndex: gridIndex.precip, yAxisIndex: yIdx.precip, stack: "pband", lineStyle: { opacity: 0 }, showSymbol: false, silent: true });
       seriesList.push({ name: "_precipBand", type: "line", data: width, xAxisIndex: gridIndex.precip, yAxisIndex: yIdx.precip, stack: "pband", lineStyle: { opacity: 0 }, areaStyle: { color: palette.bandPrecip }, showSymbol: false, silent: true });
     }
     firstOfPanel.add(gridIndex.precip); // shade already on temp; keep precip clean
-    seriesList.push({
-      name: "Precipitation",
-      type: "bar",
-      data: hourly.precipitation.map((v) => round1(v)),
-      xAxisIndex: gridIndex.precip,
-      yAxisIndex: yIdx.precip,
-      itemStyle: { color: palette.precip },
-      emphasis: { disabled: true },
-      barMaxWidth: 6,
-      z: 3,
-    });
-    seriesList.push({
-      name: "Chance of precip",
-      type: "line",
-      data: hourly.precipProbability,
-      xAxisIndex: gridIndex.precip,
-      yAxisIndex: yIdx.prob,
-      showSymbol: false,
-      smooth: 0.2,
-      lineStyle: { color: palette.precipProb, width: 1.6 },
-      itemStyle: { color: palette.precipProb },
-      areaStyle: { color: palette.bandPrecip, opacity: 0.35 },
-      emphasis: lineEmph,
-    });
+    if (!isHidden("Precipitation")) {
+      seriesList.push({
+        name: "Precipitation",
+        type: "bar",
+        data: hourly.precipitation.map((v) => round1(v)),
+        xAxisIndex: gridIndex.precip,
+        yAxisIndex: yIdx.precip,
+        itemStyle: { color: palette.precip },
+        emphasis: { disabled: true },
+        barMaxWidth: 6,
+        z: 3,
+      });
+    }
+    if (!isHidden("Chance of precip")) {
+      // A forecast probability is meaningless for hours that have already
+      // happened — show it only from "now" forward (so it's all "forecast", thick).
+      const cur = input.currentIso ?? null;
+      const probData = hourly.precipProbability.map((v, i) => (cur && time[i] < cur ? NaN : v));
+      pushLine("Chance of precip", probData, palette.precipProb, gridIndex.precip, yIdx.prob, 1.6, {
+        areaStyle: { color: palette.bandPrecip, opacity: 0.35 },
+      });
+    }
   }
 
   // Atmosphere panel.
   if (showAtmo) {
     firstOfPanel.add(gridIndex.atmo);
-    seriesList.push({
-      name: "Cloud cover",
-      type: "line",
-      data: hourly.cloudCover,
-      xAxisIndex: gridIndex.atmo,
-      yAxisIndex: yIdx.pct,
-      showSymbol: false,
-      smooth: 0.2,
-      lineStyle: { color: palette.cloud, width: 0 },
-      areaStyle: { color: palette.cloud },
-      emphasis: lineEmph,
-      z: 1,
-    });
-    seriesList.push({
-      name: "Humidity",
-      type: "line",
-      data: hourly.humidity,
-      xAxisIndex: gridIndex.atmo,
-      yAxisIndex: yIdx.pct,
-      showSymbol: false,
-      smooth: 0.2,
-      lineStyle: { color: palette.humidity, width: 1.8 },
-      itemStyle: { color: palette.humidity },
-      emphasis: lineEmph,
-    });
-    seriesList.push({
-      name: "Pressure",
-      type: "line",
-      data: hourly.pressure.map(round1),
-      xAxisIndex: gridIndex.atmo,
-      yAxisIndex: yIdx.pressure,
-      showSymbol: false,
-      smooth: 0.2,
-      lineStyle: { color: palette.pressure, width: 1.8 },
-      itemStyle: { color: palette.pressure },
-      emphasis: lineEmph,
+    if (!isHidden("Cloud cover")) {
+      seriesList.push({
+        name: "Cloud cover",
+        type: "line",
+        data: hourly.cloudCover,
+        xAxisIndex: gridIndex.atmo,
+        yAxisIndex: yIdx.pct,
+        showSymbol: false,
+        smooth: 0.2,
+        lineStyle: { color: palette.cloud, width: 0 },
+        areaStyle: { color: palette.cloud },
+        emphasis: lineEmph,
+        z: 1,
+      });
+    }
+    if (!isHidden("Humidity")) {
+      pushLine("Humidity", hourly.humidity, palette.humidity, gridIndex.atmo, yIdx.pct, 1.8);
+    }
+    if (!isHidden("Pressure")) {
+      pushLine("Pressure", hourly.pressure.map(round1), palette.pressure, gridIndex.atmo, yIdx.pressure, 1.8);
+    }
+  }
+
+  // Air-quality panel: AQHI line coloured by risk band (via visualMap below).
+  let aqhiSeriesIndices: number[] = [];
+  if (showAir && !isHidden("Air quality")) {
+    firstOfPanel.add(gridIndex.air);
+    const aqhiData = (input.aqhi as (number | null)[]).map((v) => (v == null ? NaN : v));
+    aqhiSeriesIndices = pushLine("Air quality", aqhiData, AQHI_BANDS.moderate, gridIndex.air, yIdx.aqhi, 2, {
+      areaStyle: { opacity: 0.14 },
     });
   }
 
@@ -309,6 +362,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     "Cloud cover": "%",
     Humidity: "%",
     Pressure: " hPa",
+    "Air quality": " AQHI",
   };
 
   const tooltip: EChartsOption["tooltip"] = {
@@ -321,8 +375,11 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       const arr = params as { seriesName: string; value: number; color: string; axisValue: string }[];
       if (!arr.length) return "";
       const hovered = input.getHovered?.();
+      // Past/forecast split means each series appears twice; keep one finite row.
+      const seen = new Set<string>();
       const rows = arr
         .filter((p) => !p.seriesName.startsWith("_") && p.value != null && Number.isFinite(p.value))
+        .filter((p) => (seen.has(p.seriesName) ? false : (seen.add(p.seriesName), true)))
         .map((p) => {
           const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px"></span>`;
           const suffix = unitFor[p.seriesName] ?? "";
@@ -338,6 +395,23 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     },
   };
 
+  // Colour the AQHI line(s) by risk band (past + forecast segments).
+  const visualMap =
+    aqhiSeriesIndices.length > 0
+      ? {
+          show: false,
+          type: "piecewise" as const,
+          dimension: 1,
+          seriesIndex: aqhiSeriesIndices,
+          pieces: [
+            { lte: 3, color: AQHI_BANDS.low },
+            { gt: 3, lte: 6, color: AQHI_BANDS.moderate },
+            { gt: 6, lte: 10, color: AQHI_BANDS.high },
+            { gt: 10, color: AQHI_BANDS.veryHigh },
+          ],
+        }
+      : undefined;
+
   return {
     animation: false,
     grid: grids,
@@ -346,6 +420,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     axisPointer: { link: [{ xAxisIndex: "all" }] },
     tooltip,
     series: seriesList,
+    ...(visualMap ? { visualMap } : {}),
   };
 }
 
@@ -353,40 +428,41 @@ function tooltipHeader(iso: string): string {
   return `${formatDayShort(iso)} · ${formatTime(iso)}`;
 }
 
-export interface LegendEntry {
-  name: string;
-  color: string;
-}
+export type LegendEntry = { name: string; color: string; help: string } & (
+  | { kind: "series"; seriesKey: SeriesKey } // a togglable settings series
+  | { kind: "line" } // a panel sub-line (toggled locally via the legend)
+);
 
 /**
- * The visible series as {name, color} — names match the chart series exactly so
- * the HTML legend can drive ECharts highlight/downplay and reflect line hovers.
+ * Every chart line as {name, color, kind, help}. Names match the chart series
+ * exactly. The five temperature series are always listed (so a deactivated one
+ * shows as an empty box); panel sub-lines appear only when their panel is on. The
+ * `help` text is shown on legend hover — it replaces the old settings-menu chips.
  */
 export function meteogramLegend(input: {
-  series: SeriesKey[];
   panels: PanelKey[];
   palette: ChartPalette;
+  hasAir?: boolean;
 }): LegendEntry[] {
-  const { series, panels, palette } = input;
-  const s: Record<SeriesKey, LegendEntry> = {
-    temp: { name: "Temperature", color: palette.temp },
-    feels: { name: "Feels like", color: palette.feels },
-    dew: { name: "Dew point", color: palette.dew },
-    wetbulb: { name: "Wet bulb", color: palette.wetbulb },
-    enthalpy: { name: "Enthalpy", color: palette.enthalpy },
-  };
-  const out: LegendEntry[] = [];
-  (["temp", "feels", "dew", "wetbulb", "enthalpy"] as SeriesKey[]).forEach(
-    (k) => series.includes(k) && out.push(s[k]),
-  );
+  const { panels, palette } = input;
+  const out: LegendEntry[] = [
+    { name: "Temperature", color: palette.temp, kind: "series", seriesKey: "temp", help: "Air temperature measured 2 m above the ground." },
+    { name: "Feels like", color: palette.feels, kind: "series", seriesKey: "feels", help: "Feels-like (apparent) temperature — folds in humidity, wind, and sun. Dashed, and shown only where it differs from the temperature by more than 2 °C." },
+    { name: "Dew point", color: palette.dew, kind: "series", seriesKey: "dew", help: "Dew point — the temperature at which dew forms; higher feels muggier." },
+    { name: "Wet bulb", color: palette.wetbulb, kind: "series", seriesKey: "wetbulb", help: "Wet-bulb temperature — the coolest a surface can get by evaporation. Sustained values near 35 °C are life-threatening even in the shade." },
+    { name: "Enthalpy", color: palette.enthalpy, kind: "series", seriesKey: "enthalpy", help: "Enthalpy — total heat energy of the moist air (kJ/kg), combining temperature and humidity." },
+  ];
   if (panels.includes("precip")) {
-    out.push({ name: "Precipitation", color: palette.precip });
-    out.push({ name: "Chance of precip", color: palette.precipProb });
+    out.push({ name: "Precipitation", color: palette.precip, kind: "line", help: "Hourly precipitation amount (rain / melted snow), in mm." });
+    out.push({ name: "Chance of precip", color: palette.precipProb, kind: "line", help: "Probability of precipitation — a forecast, so it's hidden for hours that have already passed." });
   }
   if (panels.includes("atmo")) {
-    out.push({ name: "Cloud cover", color: palette.cloud });
-    out.push({ name: "Humidity", color: palette.humidity });
-    out.push({ name: "Pressure", color: palette.pressure });
+    out.push({ name: "Cloud cover", color: palette.cloud, kind: "line", help: "Fraction of the sky covered by cloud (%)." });
+    out.push({ name: "Humidity", color: palette.humidity, kind: "line", help: "Relative humidity (%)." });
+    out.push({ name: "Pressure", color: palette.pressure, kind: "line", help: "Surface air pressure (hPa)." });
+  }
+  if (panels.includes("air") && input.hasAir) {
+    out.push({ name: "Air quality", color: AQHI_BANDS.moderate, kind: "line", help: "Canada's Air Quality Health Index (AQHI, 1–10+), coloured by health-risk band." });
   }
   return out;
 }
