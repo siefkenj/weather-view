@@ -17,7 +17,7 @@ export default defineConfig(({ command }) => ({
       output: {
         manualChunks: {
           echarts: ["echarts", "echarts/core", "echarts/charts", "echarts/components", "echarts/renderers"],
-          react: ["react", "react-dom", "react-router-dom", "@tanstack/react-query"],
+          react: ["react", "react-dom", "react-router-dom", "react-redux", "@reduxjs/toolkit"],
         },
       },
     },

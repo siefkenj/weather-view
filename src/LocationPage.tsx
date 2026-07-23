@@ -1,8 +1,7 @@
 import { useMemo } from "react";
 import { Navigate, useLocation, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import { Dashboard } from "./components/Dashboard";
-import { fetchGeocode } from "./api/openMeteo";
+import { useGeocodeQuery } from "./store/openMeteoApi";
 import { DEFAULT_PLACE, parseSlug, placeToSlug } from "./utils/place";
 import type { GeoLocation, Place } from "./api/types";
 
@@ -33,11 +32,8 @@ export function LocationPage() {
 
   const needsResolve = !parsed || parsed.latitude == null || parsed.longitude == null;
 
-  const resolveQ = useQuery({
-    queryKey: ["resolve", parsed?.name],
-    queryFn: ({ signal }) => fetchGeocode(parsed?.name ?? "", signal),
-    enabled: needsResolve && !!parsed?.name,
-    staleTime: Infinity,
+  const resolveQ = useGeocodeQuery(parsed?.name ?? "", {
+    skip: !(needsResolve && !!parsed?.name),
   });
 
   if (!parsed) {

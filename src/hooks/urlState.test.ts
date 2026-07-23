@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseState } from "./useUrlState";
+import { parseState } from "../store/urlState";
 
 const parse = (qs: string) => parseState(new URLSearchParams(qs));
 

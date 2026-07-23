@@ -1,10 +1,10 @@
 // Debounced geocoding search for the city box. Curated Ontario places (parks,
 // conservation areas, landmarks the geocoder misses) are merged in on top.
 
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { fetchGeocode } from "../api/openMeteo";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useGeocodeQuery } from "../store/openMeteoApi";
 import { curatedMatches, placeNameKey } from "../utils/curatedPlaces";
+import type { GeocodingResponse } from "../api/types";
 
 function useDebounced<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -20,14 +20,13 @@ export function useGeocode(query: string) {
   const debounced = useDebounced(trimmed, 250);
   const enabled = debounced.length >= 2;
 
-  const result = useQuery({
-    queryKey: ["geocode", debounced],
-    queryFn: ({ signal }) => fetchGeocode(debounced, signal),
-    enabled,
-    staleTime: 24 * 60 * 60 * 1000,
-  });
+  const result = useGeocodeQuery(debounced, { skip: !enabled });
 
-  const apiResults = result.data?.results;
+  // Keep the previous list on screen between keystrokes so results don't flicker.
+  const lastData = useRef<GeocodingResponse | undefined>(undefined);
+  if (result.data !== undefined) lastData.current = result.data;
+  const apiResults = (result.data ?? (result.isFetching ? lastData.current : undefined))?.results;
+
   const results = useMemo(() => {
     const curated = curatedMatches(debounced);
     const seen = new Set(curated.map((c) => placeNameKey(c.name)));

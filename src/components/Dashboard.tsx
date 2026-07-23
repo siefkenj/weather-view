@@ -9,7 +9,7 @@ import { useDashboardState } from "../hooks/useUrlState";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTheme } from "../hooks/useTheme";
 import { chartPalette } from "../theme/palette";
-import { useAirQuality, useEnsemble, useForecast, useMinutely } from "../hooks/useWeather";
+import { useLocationWeather } from "../hooks/useWeather";
 import { MAX_FORECAST_DAYS, MAX_PAST_DAYS } from "../api/openMeteo";
 import { computeBands, recenterBandOnLine } from "../api/ensemble";
 import {
@@ -88,19 +88,19 @@ export function Dashboard({ place }: { place: Place }) {
 
   const windowDays = state.days;
   const offset = state.offset;
-  // Fetch the whole timeline (92 days of history → 16-day forecast) up front as
-  // one continuous forecast — only ~32 KB gzipped. Scrolling just slices a window
-  // out of it, so panning into the past never triggers a refetch (which was what
-  // made the chart jump: scroll, snap back to old data, then snap again on load).
-  const pastDays = MAX_PAST_DAYS;
-
-  const forecastQ = useForecast(place, { forecastDays: MAX_FORECAST_DAYS, pastDays });
   const ciEnabled = state.ci;
-  const ensembleQ = useEnsemble(place, { forecastDays: MAX_FORECAST_DAYS, enabled: ciEnabled });
   const airEnabled = state.panels.includes("air");
-  const airQ = useAirQuality(place, { forecastDays: 7, pastDays, enabled: airEnabled });
-  // 15-minute near-term data (for the mini graph and the zoomed-in meteogram).
-  const minutelyQ = useMinutely(place);
+
+  // All weather for this location, grouped as sub-objects under its lon,lat key.
+  // Each field is an independent RTK Query result (own data/loading/error); the
+  // whole timeline (92 days history → 16-day forecast) is fetched up front so
+  // scrolling just slices a window and never refetches. `ci`/`air` gate the two
+  // optional sources.
+  const wx = useLocationWeather(place, { ci: ciEnabled, air: airEnabled });
+  const forecastQ = wx.forecast;
+  const ensembleQ = wx.ensemble;
+  const airQ = wx.airQuality;
+  const minutelyQ = wx.minutely;
 
   const forecast = forecastQ.data;
   const fine = useMemo(

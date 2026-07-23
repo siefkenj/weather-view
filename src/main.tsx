@@ -1,21 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Navigate, RouterProvider, createHashRouter } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Provider } from "react-redux";
 import { App } from "./App";
 import { LocationPage } from "./LocationPage";
-import { ThemeProvider } from "./hooks/useTheme";
+import { store } from "./store";
 import { DEFAULT_PLACE, placeToSlug } from "./utils/place";
 import "./index.css";
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      retry: 1,
-    },
-  },
-});
 
 const router = createHashRouter([
   {
@@ -30,10 +21,8 @@ const router = createHashRouter([
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <RouterProvider router={router} />
-      </ThemeProvider>
-    </QueryClientProvider>
+    <Provider store={store}>
+      <RouterProvider router={router} />
+    </Provider>
   </StrictMode>,
 );

@@ -32,7 +32,7 @@ export function computeHorizontalLayout(panels: PanelKey[]): HorizontalLayout {
 
   const topPad = 3;
   const bottomPad = 7;
-  const gap = 4.5;
+  const gap = 1.5;
 
   const usable = 100 - topPad - bottomPad - gap * (panelKeys.length - 1);
   const weightSum = panelKeys.reduce((s, k) => s + WEIGHTS[k], 0);

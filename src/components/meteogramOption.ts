@@ -76,7 +76,6 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     height: `${g.height}%`,
   }));
   const gridIndex = Object.fromEntries(panelList.map((p, i) => [p, i]));
-  const lastGrid = panelList.length - 1;
 
   const dayLabel = {
     color: palette.axisLabel,
@@ -87,6 +86,16 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     hideOverlap: true,
   };
 
+  // The AQHI panel doesn't carry the date axis — put the day labels on the last
+  // non-air panel instead (falling back to the last panel if air is the only one).
+  let dateGrid = panelList.length - 1;
+  for (let i = panelList.length - 1; i >= 0; i--) {
+    if (panelList[i] !== "air") {
+      dateGrid = i;
+      break;
+    }
+  }
+
   // ---- Axes ------------------------------------------------------------
   const xAxis: EChartsOption["xAxis"] = panelList.map((_key, i) => ({
     type: "category",
@@ -95,7 +104,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     boundaryGap: false,
     axisLine: { lineStyle: { color: palette.axisLine } },
     axisTick: { show: false },
-    axisLabel: i === lastGrid ? dayLabel : { show: false },
+    axisLabel: i === dateGrid ? dayLabel : { show: false },
     axisPointer: { label: { formatter: (p: { value: unknown }) => tooltipHeader(String(p.value)) } },
   }));
 
@@ -113,13 +122,23 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     axisLabel: { color: palette.axisLabel },
   });
 
+  // Axis titles: rotated vertical and sitting to the side of the tick numbers,
+  // instead of ECharts' default position at the top of the axis (which overlapped
+  // the panel above). `right` places it right of the numbers for right-hand axes.
+  const axisName = (color: string, right = false) => ({
+    nameLocation: "middle" as const,
+    nameRotate: 90,
+    nameGap: right ? 40 : 38,
+    nameTextStyle: { color, fontSize: 11 },
+  });
+
   // A thick gridline + label every 5 °C (10 °F), and a thin gridline every 1 °C (2 °F).
   const gridStep = units === "imperial" ? 2 : 1;
   const labelStep = units === "imperial" ? 10 : 5;
   pushY("temp", {
     ...yBase(gridIndex.temp),
-    name: input.headroom ? "" : tempUnit(units),
-    nameTextStyle: { color: palette.axisLabel },
+    name: tempUnit(units),
+    ...axisName(palette.axisLabel),
     scale: true,
     interval: labelStep,
     splitLine: { lineStyle: { color: palette.splitLine, width: 1.5 } },
@@ -146,16 +165,17 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       position: "right",
       scale: true,
       splitLine: { show: false },
-      nameTextStyle: { color: palette.enthalpy },
+      ...axisName(palette.enthalpy, true),
       axisLabel: { color: palette.enthalpy },
     });
   }
   if (showPrecip) {
-    pushY("precip", { ...yBase(gridIndex.precip), name: PRECIP_UNIT, min: 0, nameTextStyle: { color: palette.axisLabel } });
-    pushY("prob", { ...yBase(gridIndex.precip), min: 0, max: 100, position: "right", splitLine: { show: false }, axisLabel: { color: palette.precipProb, formatter: "{value}%" } });
+    // Hide the 0 / 0% baseline labels (min is 0 on both).
+    pushY("precip", { ...yBase(gridIndex.precip), name: PRECIP_UNIT, min: 0, ...axisName(palette.axisLabel), axisLabel: { color: palette.axisLabel, showMinLabel: false } });
+    pushY("prob", { ...yBase(gridIndex.precip), min: 0, max: 100, position: "right", splitLine: { show: false }, axisLabel: { color: palette.precipProb, formatter: "{value}%", showMinLabel: false } });
   }
   if (showAtmo) {
-    pushY("pct", { ...yBase(gridIndex.atmo), min: 0, max: 100, axisLabel: { color: palette.axisLabel, formatter: "{value}%" } });
+    pushY("pct", { ...yBase(gridIndex.atmo), min: 0, max: 100, axisLabel: { color: palette.axisLabel, formatter: "{value}%", showMinLabel: false } });
     pushY("pressure", { ...yBase(gridIndex.atmo), position: "right", scale: true, splitLine: { show: false }, axisLabel: { color: palette.pressure, formatter: "{value}" } });
   }
   const aqhiFinite = showAir ? (input.aqhi!.filter((v) => v != null && Number.isFinite(v)) as number[]) : [];
@@ -167,7 +187,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       min: 0,
       max: aqhiMax,
       interval: Math.max(1, Math.round(aqhiMax / 4)),
-      nameTextStyle: { color: palette.axisLabel },
+      ...axisName(palette.axisLabel),
     });
   }
 
@@ -254,23 +274,24 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     });
   }
 
-  // Snap the "now" marker to the nearest grid category so it lands correctly on
-  // both the hourly and the refined 15-minute axes.
-  const nowMark =
-    nowIso && nowIdx >= 0
-      ? {
-          symbol: "none",
-          silent: true,
-          lineStyle: { color: palette.nowLine, type: "dashed" as const, width: 1.5 },
-          label: { show: true, formatter: "now", color: palette.nowLine, position: "start" as const },
-          data: [{ xAxis: time[nowIdx] }],
-        }
-      : undefined;
+  // "now" dashed vertical line. Snapped to the nearest grid category (so it lands
+  // right on both the hourly and refined 15-minute axes) and drawn on EVERY panel
+  // via a carrier series per grid (added after the data series). The "now" label
+  // shows once, on the temperature panel.
+  const showNow = !!nowIso && nowIdx >= 0;
+  const nowMark = (labeled: boolean) => ({
+    symbol: "none" as const,
+    silent: true,
+    lineStyle: { color: palette.nowLine, type: "dashed" as const, width: 1.5 },
+    label: labeled
+      ? { show: true, formatter: "now", color: palette.nowLine, position: "start" as const }
+      : { show: false },
+    data: [{ xAxis: time[nowIdx] }],
+  });
 
   if (series.includes("temp") && !isHidden("Temperature")) {
     pushLine("Temperature", hourly.temperature.map((v) => round1(cToDisplay(v, units))), palette.temp, gridIndex.temp, yIdx.temp, 2, {
       z: 5,
-      ...(nowMark ? { markLine: nowMark } : {}),
     });
   }
   if (series.includes("feels") && !isHidden("Feels like")) {
@@ -358,6 +379,27 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     const aqhiData = (input.aqhi as (number | null)[]).map((v) => (v == null ? NaN : v));
     aqhiSeriesIndices = pushLine("Air quality", aqhiData, AQHI_BANDS.moderate, gridIndex.air, yIdx.aqhi, 2, {
       areaStyle: { opacity: 0.14 },
+    });
+  }
+
+  // One near-invisible carrier series per panel, each holding the "now" markLine,
+  // so the dashed line runs through every chart (the label only on the temp panel).
+  if (showNow) {
+    const yForGrid: Record<number, number> = { [gridIndex.temp]: yIdx.temp };
+    if (showPrecip) yForGrid[gridIndex.precip] = yIdx.precip;
+    if (showAtmo) yForGrid[gridIndex.atmo] = yIdx.pct;
+    if (showAir) yForGrid[gridIndex.air] = yIdx.aqhi;
+    panelList.forEach((_p, gi) => {
+      seriesList.push({
+        name: "_now",
+        type: "line",
+        data: [],
+        xAxisIndex: gi,
+        yAxisIndex: yForGrid[gi],
+        silent: true,
+        showSymbol: false,
+        markLine: nowMark(gi === gridIndex.temp),
+      } as SeriesOption);
     });
   }
 

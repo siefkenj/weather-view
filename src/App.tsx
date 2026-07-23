@@ -2,12 +2,18 @@ import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { LocationSearch } from "./components/LocationSearch";
 import { SettingsMenu } from "./components/SettingsMenu";
 import { WeatherIcon } from "./components/WeatherIcon";
+import { useApplyTheme } from "./hooks/useTheme";
+import { useUrlSync } from "./store/urlSync";
 import { placeToSlug } from "./utils/place";
 import type { Place } from "./api/types";
 
 export function App() {
   const navigate = useNavigate();
   const location = useLocation();
+  // App-wide side effects: keep the URL in sync with the view slice, and reflect
+  // the theme onto the document.
+  useUrlSync();
+  useApplyTheme();
 
   function goToPlace(place: Place) {
     // Keep the query string (visible-forecast state); carry the rich place in

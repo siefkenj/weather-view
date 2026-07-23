@@ -62,7 +62,12 @@ export function ForecastHeader({ summaries, units, todayKey }: Props) {
                 <span className="fh-md">{formatMonthDay(d.date)}</span>
               </span>
               <WeatherIcon kind={wx.icon} size={26} title={wx.label} />
-              {d.precipSum > 0 ? <span className="fh-precip">{formatPrecip(d.precipSum)}</span> : null}
+              {d.precipSum > 0 ? (
+                <span className="fh-precip">
+                  {formatPrecip(d.precipSum)}
+                  {Math.round(d.precipProbMax ?? 0) > 0 ? ` (${Math.round(d.precipProbMax)}%)` : null}
+                </span>
+              ) : null}
             </button>
           );
         })}
