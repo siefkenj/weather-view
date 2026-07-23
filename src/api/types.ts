@@ -80,6 +80,24 @@ export interface ForecastResponse {
   daily: ForecastDaily;
 }
 
+/** 15-minute block (native only where a high-res model — e.g. NOAA HRRR over
+ *  North America — covers the point; interpolated from hourly elsewhere). */
+export interface Minutely15 {
+  time: string[];
+  temperature_2m: number[];
+  apparent_temperature: number[];
+  precipitation: number[];
+}
+
+export interface MinutelyResponse {
+  latitude: number;
+  longitude: number;
+  timezone: string;
+  utc_offset_seconds: number;
+  minutely_15_units: Record<string, string>;
+  minutely_15: Minutely15;
+}
+
 export interface AirQualityHourly {
   time: string[];
   pm2_5: number[];

@@ -4,6 +4,7 @@ import {
   buildEnsembleUrl,
   buildForecastUrl,
   buildGeocodeUrl,
+  buildMinutelyUrl,
 } from "./openMeteo";
 
 describe("buildForecastUrl", () => {
@@ -42,6 +43,18 @@ describe("buildAirQualityUrl", () => {
     expect(url.searchParams.get("forecast_days")).toBe("7");
     expect(url.searchParams.get("hourly")).toContain("us_aqi");
     expect(url.searchParams.get("hourly")).toContain("pm2_5");
+  });
+});
+
+describe("buildMinutelyUrl", () => {
+  it("requests a small near-term 15-minute window", () => {
+    const url = new URL(buildMinutelyUrl({ latitude: 43.7, longitude: -79.4 }));
+    expect(url.origin + url.pathname).toBe("https://api.open-meteo.com/v1/forecast");
+    expect(url.searchParams.get("minutely_15")).toContain("temperature_2m");
+    expect(url.searchParams.get("minutely_15")).toContain("precipitation");
+    expect(url.searchParams.get("forecast_days")).toBe("3");
+    expect(url.searchParams.get("past_days")).toBe("2");
+    expect(url.searchParams.get("hourly")).toBeNull();
   });
 });
 

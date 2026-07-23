@@ -2,7 +2,7 @@ import { useId } from "react";
 import { describeWeather } from "../api/weatherCode";
 import { WeatherIcon } from "./WeatherIcon";
 import { formatTemp, type Units } from "../utils/units";
-import { dayKey, formatTime } from "../utils/format";
+import { dayKey, formatTime, parseLocal } from "../utils/format";
 import { aqhiCategory, formatAqhi } from "../utils/aqhi";
 import { daylightIntensity } from "../utils/solar";
 import { isDaytime, type DailySummary } from "../utils/series";
@@ -180,11 +180,14 @@ function TempMiniGraph({
     pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
 
   // Split the temperature line at "now" (spliced to the live observation): the
-  // past is actual (solid), the future is forecast (faded).
-  const nowH13 = nowIso.slice(0, 13);
+  // past is actual (solid), the future is forecast (faded). Positioned by real
+  // timestamps so it's correct whether `time` is hourly or the 15-minute grid.
+  const tms = time.map((t) => parseLocal(t).getTime());
+  const nowMs = parseLocal(nowIso).getTime();
   let k = -1;
-  for (let i = 0; i < n; i++) if (time[i].slice(0, 13) <= nowH13) k = i;
-  const nowFrac = k >= 0 ? Math.min(n - 1, k + Number(nowIso.slice(14, 16)) / 60) : 0;
+  for (let i = 0; i < n; i++) if (tms[i] <= nowMs) k = i;
+  const nowFrac =
+    k >= 0 && k < n - 1 ? k + (nowMs - tms[k]) / (tms[k + 1] - tms[k]) : Math.max(0, k);
   const nowX = padX + (nowFrac / (n - 1)) * innerW;
 
   const past: [number, number][] = [];

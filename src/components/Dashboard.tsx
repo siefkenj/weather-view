@@ -9,9 +9,9 @@ import { useDashboardState } from "../hooks/useUrlState";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTheme } from "../hooks/useTheme";
 import { chartPalette } from "../theme/palette";
-import { useAirQuality, useEnsemble, useForecast } from "../hooks/useWeather";
+import { useAirQuality, useEnsemble, useForecast, useMinutely } from "../hooks/useWeather";
 import { MAX_FORECAST_DAYS, MAX_PAST_DAYS } from "../api/openMeteo";
-import { computeBands, recenterBandOnLine, type Bands } from "../api/ensemble";
+import { computeBands, recenterBandOnLine } from "../api/ensemble";
 import {
   dailySummaries,
   dayList,
@@ -20,9 +20,20 @@ import {
   windowByDays,
   type HourlyPoint,
 } from "../utils/series";
-import { addDays, dayKey, formatMonthDay } from "../utils/format";
+import {
+  interpBands,
+  interpNullable,
+  refineHourlyWindow,
+  sliceFine,
+  toFineSamples,
+} from "../utils/refine";
+import { addDays, dayKey, formatMonthDay, parseLocal } from "../utils/format";
 import { computeAqhiSeries } from "../utils/aqhi";
 import type { Place } from "../api/types";
+
+// Below this window width, the meteogram is refined onto the 15-minute grid
+// (native near-term data covers ~2 days; finer detail is invisible beyond that).
+const REFINE_MAX_DAYS = 2;
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
@@ -57,22 +68,6 @@ function makeAxisMask(
   return mask;
 }
 
-/** Reindex confidence bands onto an arbitrary time window (match by timestamp). */
-function alignBands(windowTime: string[], bands: Bands): Bands {
-  const idx = new Map(bands.time.map((t, i) => [t, i]));
-  const pick = (arr: number[]) =>
-    windowTime.map((t) => {
-      const i = idx.get(t);
-      return i == null ? NaN : arr[i];
-    });
-  return {
-    time: windowTime,
-    lower: pick(bands.lower),
-    median: pick(bands.median),
-    upper: pick(bands.upper),
-  };
-}
-
 export function Dashboard({ place }: { place: Place }) {
   const { state, ...controls } = useDashboardState();
   const { theme } = useTheme();
@@ -104,8 +99,14 @@ export function Dashboard({ place }: { place: Place }) {
   const ensembleQ = useEnsemble(place, { forecastDays: MAX_FORECAST_DAYS, enabled: ciEnabled });
   const airEnabled = state.panels.includes("air");
   const airQ = useAirQuality(place, { forecastDays: 7, pastDays, enabled: airEnabled });
+  // 15-minute near-term data (for the mini graph and the zoomed-in meteogram).
+  const minutelyQ = useMinutely(place);
 
   const forecast = forecastQ.data;
+  const fine = useMemo(
+    () => (minutelyQ.data ? toFineSamples(minutelyQ.data.minutely_15) : null),
+    [minutelyQ.data],
+  );
 
   const full = useMemo(() => (forecast ? extractHourly(forecast) : null), [forecast]);
   const summaries = useMemo(() => (forecast ? dailySummaries(forecast) : []), [forecast]);
@@ -129,17 +130,29 @@ export function Dashboard({ place }: { place: Place }) {
     [full, win],
   );
 
+  // When zoomed in (≤2 days) and 15-min data covers the window, refine the whole
+  // window onto the 15-minute grid — native temperature / feels-like / precip,
+  // the rest interpolated. Skipped in portrait (the transposed chart keeps its
+  // hourly assumptions) and falls back to hourly when uncovered. Everything below
+  // aligns to chartHourly.time so bands and AQHI ride the same grid.
+  const chartHourly: HourlyPoint | null = useMemo(() => {
+    if (!hourly) return null;
+    if (portrait || windowDays > REFINE_MAX_DAYS || !fine) return hourly;
+    return refineHourlyWindow(hourly, fine) ?? hourly;
+  }, [hourly, portrait, windowDays, fine]);
+  const refined = !!chartHourly && !!hourly && chartHourly !== hourly;
+
   const tempBand = useMemo(() => {
-    if (!ciEnabled || !ensembleQ.data || !hourly) return null;
-    const raw = alignBands(hourly.time, computeBands(ensembleQ.data, "temperature_2m"));
-    return recenterBandOnLine(raw, hourly.temperature);
-  }, [ciEnabled, ensembleQ.data, hourly]);
+    if (!ciEnabled || !ensembleQ.data || !chartHourly) return null;
+    const raw = interpBands(chartHourly.time, computeBands(ensembleQ.data, "temperature_2m"));
+    return recenterBandOnLine(raw, chartHourly.temperature);
+  }, [ciEnabled, ensembleQ.data, chartHourly]);
 
   const precipBand = useMemo(() => {
-    if (!ciEnabled || !ensembleQ.data || !hourly) return null;
-    const raw = alignBands(hourly.time, computeBands(ensembleQ.data, "precipitation"));
-    return recenterBandOnLine(raw, hourly.precipitation);
-  }, [ciEnabled, ensembleQ.data, hourly]);
+    if (!ciEnabled || !ensembleQ.data || !chartHourly) return null;
+    const raw = interpBands(chartHourly.time, computeBands(ensembleQ.data, "precipitation"));
+    return recenterBandOnLine(raw, chartHourly.precipitation);
+  }, [ciEnabled, ensembleQ.data, chartHourly]);
 
   // Canadian AQHI per hour, aligned to the air-quality series.
   const aqhi = useMemo(
@@ -153,7 +166,8 @@ export function Dashboard({ place }: { place: Place }) {
   }, [aqhi, airQ.data, forecast]);
 
   // The current weather day (2am → 2am) that contains "now", for the today-panel
-  // graph. Before 2am the day belongs to the previous calendar date.
+  // graph. Before 2am the day belongs to the previous calendar date. Uses the
+  // 15-minute grid when it covers the day, else falls back to hourly.
   const miniWindow = useMemo(() => {
     if (!full || !forecast) return null;
     const nowIsoTime = forecast.current.time;
@@ -161,34 +175,35 @@ export function Dashboard({ place }: { place: Place }) {
       Number(nowIsoTime.slice(11, 13)) < 2 ? addDays(dayKey(nowIsoTime), -1) : dayKey(nowIsoTime);
     const start = `${dayStart}T02:00`;
     const end = `${addDays(dayStart, 1)}T02:00`;
-    const time: string[] = [];
-    const temperature: number[] = [];
-    const apparent: number[] = [];
-    for (let i = 0; i < full.time.length; i++) {
-      const t = full.time[i];
-      if (t >= start && t <= end) {
-        time.push(t);
-        temperature.push(full.temperature[i]);
-        apparent.push(full.apparent[i]);
+    let time: string[] = [];
+    let temperature: number[] = [];
+    let apparent: number[] = [];
+    const slice = fine ? sliceFine(fine, start, end) : null;
+    if (slice) {
+      ({ time, temperature, apparent } = slice);
+    } else {
+      for (let i = 0; i < full.time.length; i++) {
+        const t = full.time[i];
+        if (t >= start && t <= end) {
+          time.push(t);
+          temperature.push(full.temperature[i]);
+          apparent.push(full.apparent[i]);
+        }
       }
     }
     const daySummary = summaries.find((s) => s.date === dayStart);
     return time.length > 1
       ? { time, temperature, apparent, dayKey: dayStart, sunrise: daySummary?.sunrise, sunset: daySummary?.sunset }
       : null;
-  }, [full, forecast, summaries]);
+  }, [full, forecast, summaries, fine]);
 
-  // AQHI aligned to the meteogram window's hourly timestamps, for the stacked
-  // air-quality panel. Undefined when the window has no air-quality coverage.
+  // AQHI aligned to the meteogram window's grid (interpolated onto the 15-minute
+  // grid when refined). Undefined when the window has no air-quality coverage.
   const aqhiWindow = useMemo(() => {
-    if (!airEnabled || !aqhi || !airQ.data || !hourly) return undefined;
-    const idx = new Map(airQ.data.hourly.time.map((t, i) => [t, i]));
-    const aligned = hourly.time.map((t) => {
-      const i = idx.get(t);
-      return i != null && Number.isFinite(aqhi[i]) ? aqhi[i] : null;
-    });
+    if (!airEnabled || !aqhi || !airQ.data || !chartHourly) return undefined;
+    const aligned = interpNullable(airQ.data.hourly.time, aqhi, chartHourly.time);
     return aligned.some((v) => v != null) ? aligned : undefined;
-  }, [airEnabled, aqhi, airQ.data, hourly]);
+  }, [airEnabled, aqhi, airQ.data, chartHourly]);
 
   const legend = useMemo(
     () => meteogramLegend({ panels: state.panels, palette: chartPalette(theme), hasAir: !!aqhiWindow }),
@@ -239,14 +254,19 @@ export function Dashboard({ place }: { place: Place }) {
     if (busyRef.current || dest === offset) return;
     const el = animRef.current;
     const viewport = el?.parentElement;
-    const n = hourly?.time.length ?? 0;
+    const t = chartHourly?.time ?? [];
+    const n = t.length;
     const plotW = (el?.offsetWidth ?? 0) - 2 * AXIS_GUTTER;
     // Vertical (portrait) layout or an unmeasurable chart → just swap, no slide.
     if (portrait || !el || !viewport || plotW <= 0 || n < 2) {
       controls.setOffset(dest);
       return;
     }
-    const delta = ((Math.abs(dest - offset) * 24) / (n - 1)) * plotW;
+    // Grid points per day (24 hourly, 96 on the refined 15-min grid) so the shift
+    // distance is right at either resolution.
+    const stepMin = (parseLocal(t[1]).getTime() - parseLocal(t[0]).getTime()) / 60000;
+    const perDay = stepMin > 0 ? Math.round(1440 / stepMin) : 24;
+    const delta = ((Math.abs(dest - offset) * perDay) / (n - 1)) * plotW;
     busyRef.current = true;
     setClipping(true);
     // Swap to the destination window synchronously so the snapshot below captures
@@ -288,7 +308,7 @@ export function Dashboard({ place }: { place: Place }) {
     el.addEventListener("transitionend", done);
   }
 
-  const hasHourly = !!hourly && hourly.time.length > 0;
+  const hasHourly = !!chartHourly && chartHourly.time.length > 0;
   // Wide screens draw the day/date + icon on the temperature graph (hover a day
   // for the full card). Narrow screens keep the standalone strip.
   const integrated = !isNarrow;
@@ -316,6 +336,11 @@ export function Dashboard({ place }: { place: Place }) {
           >
             {formatMonthDay(startKey)} – {formatMonthDay(endKey)}
           </button>
+          {refined ? (
+            <span className="meteogram-nav__res" title="Showing 15-minute detail for the near term (temperature, feels-like, and precipitation).">
+              15-min
+            </span>
+          ) : null}
         </div>
 
         {!integrated ? (
@@ -338,7 +363,7 @@ export function Dashboard({ place }: { place: Place }) {
             <div className="meteogram-anim" ref={animRef}>
               {hasHourly ? (
                 <Meteogram
-                  hourly={hourly!}
+                  hourly={chartHourly!}
                   units={state.units}
                   series={state.series}
                   panels={chartPanels}

@@ -365,9 +365,14 @@ button {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
-  gap: 8px 14px;
+  display: flex;
+  gap: 12px 24px;
+  align-items: center;
+  justify-content: space-around;
+  /* display: grid; */
+  /* grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 8px 14px; */
+
 }
 .current__facts li {
   display: flex;
@@ -629,7 +634,18 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   padding: 2px 4px 6px;
+}
+.meteogram-nav__res {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-weak);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: default;
 }
 .meteogram-nav__range {
   min-width: 130px;

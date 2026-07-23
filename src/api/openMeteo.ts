@@ -7,6 +7,7 @@ import type {
   EnsembleResponse,
   ForecastResponse,
   GeocodingResponse,
+  MinutelyResponse,
 } from "./types";
 
 const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
@@ -44,6 +45,11 @@ export const DAILY_VARS = [
 ] as const;
 
 export const CURRENT_VARS = ["temperature_2m", "apparent_temperature", "weather_code"] as const;
+
+// 15-minute variables. Only temperature/apparent/precipitation are available at
+// this cadence (surface_pressure, cloud_cover, precipitation_probability are not),
+// and native sub-hourly data reaches ~48 h out (NOAA HRRR over North America).
+export const MINUTELY_VARS = ["temperature_2m", "apparent_temperature", "precipitation"] as const;
 
 export const AIR_QUALITY_VARS = [
   "pm2_5",
@@ -110,6 +116,33 @@ export function buildForecastUrl(params: ForecastParams): string {
 
 export function fetchForecast(params: ForecastParams, signal?: AbortSignal): Promise<ForecastResponse> {
   return fetchJson<ForecastResponse>(buildForecastUrl(params), signal);
+}
+
+export interface MinutelyParams {
+  latitude: number;
+  longitude: number;
+  forecastDays?: number;
+  pastDays?: number;
+  timezone?: string;
+}
+
+// A small near-term 15-minute window: enough to cover the mini "today" graph
+// (2am→2am) plus a zoomed-in ±day or two of the meteogram. Kept light on purpose.
+export function buildMinutelyUrl(params: MinutelyParams): string {
+  return buildUrl(FORECAST_URL, {
+    latitude: params.latitude,
+    longitude: params.longitude,
+    minutely_15: MINUTELY_VARS.join(","),
+    timezone: params.timezone ?? "auto",
+    forecast_days: params.forecastDays ?? 3,
+    past_days: params.pastDays ?? 2,
+    temperature_unit: "celsius",
+    precipitation_unit: "mm",
+  });
+}
+
+export function fetchMinutely(params: MinutelyParams, signal?: AbortSignal): Promise<MinutelyResponse> {
+  return fetchJson<MinutelyResponse>(buildMinutelyUrl(params), signal);
 }
 
 export interface EnsembleParams {

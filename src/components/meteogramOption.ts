@@ -53,6 +53,13 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   const hiddenSet = new Set(input.hidden ?? []);
   const isHidden = (name: string) => hiddenSet.has(name);
 
+  // Split point between "past" and "forecast": the last grid index at or before
+  // the real current time. Index-based so it works at any resolution (hourly or
+  // the refined 15-minute grid); -1 when there's no current time in range.
+  const cur = input.currentIso ? input.currentIso.slice(0, 16) : null;
+  let nowIdx = -1;
+  if (cur) for (let i = 0; i < time.length; i++) if (time[i].slice(0, 16) <= cur) nowIdx = i;
+
   const showPrecip = panels.includes("precip");
   const showAtmo = panels.includes("atmo");
   const showAir = panels.includes("air") && Array.isArray(input.aqhi);
@@ -74,7 +81,8 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   const dayLabel = {
     color: palette.axisLabel,
     // Label at noon so the date sits centered over its day (aligned with the tiles).
-    interval: (_idx: number, value: string) => value.slice(11, 13) === "12",
+    // Match the full HH:MM so the 15-min grid doesn't stack four labels at noon.
+    interval: (_idx: number, value: string) => value.slice(11, 16) === "12:00",
     formatter: (value: string) => formatDayShort(value),
     hideOverlap: true,
   };
@@ -169,12 +177,12 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   const firstOfPanel = new Set<number>();
   // Emphasis off everywhere; hover bolding is manual.
   const lineEmph = { disabled: true as const };
-  const nowH = input.currentIso ? input.currentIso.slice(0, 13) : null;
   const thinW = (w: number) => Math.max(0.6, w * 0.5);
 
   // Push a line split into a thin "past" (already happened) segment and a thick
-  // "forecast" segment; both share the series name. The first line in a panel
-  // carries the day-shading markArea. Returns the pushed series indices.
+  // "forecast" segment; both share the series name and the split index (nowIdx),
+  // so the two halves join. The first line in a panel carries the day-shading
+  // markArea. Returns the pushed series indices.
   const pushLine = (
     name: string,
     data: number[],
@@ -206,11 +214,11 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
         ...rest,
       }) as SeriesOption;
     const indices: number[] = [];
-    const past = nowH ? data.map((v, i) => (time[i].slice(0, 13) <= nowH ? v : NaN)) : data;
+    const past = nowIdx >= 0 ? data.map((v, i) => (i <= nowIdx ? v : NaN)) : data;
     indices.push(seriesList.length);
     seriesList.push(mk(past, thinW(baseWidth), withShade));
-    if (nowH) {
-      const fut = data.map((v, i) => (time[i].slice(0, 13) >= nowH ? v : NaN));
+    if (nowIdx >= 0) {
+      const fut = data.map((v, i) => (i >= nowIdx ? v : NaN));
       indices.push(seriesList.length);
       seriesList.push(mk(fut, baseWidth, false));
     }
@@ -246,15 +254,18 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     });
   }
 
-  const nowMark = nowIso
-    ? {
-        symbol: "none",
-        silent: true,
-        lineStyle: { color: palette.nowLine, type: "dashed" as const, width: 1.5 },
-        label: { show: true, formatter: "now", color: palette.nowLine, position: "start" as const },
-        data: [{ xAxis: nowIso.slice(0, 13) + ":00" }],
-      }
-    : undefined;
+  // Snap the "now" marker to the nearest grid category so it lands correctly on
+  // both the hourly and the refined 15-minute axes.
+  const nowMark =
+    nowIso && nowIdx >= 0
+      ? {
+          symbol: "none",
+          silent: true,
+          lineStyle: { color: palette.nowLine, type: "dashed" as const, width: 1.5 },
+          label: { show: true, formatter: "now", color: palette.nowLine, position: "start" as const },
+          data: [{ xAxis: time[nowIdx] }],
+        }
+      : undefined;
 
   if (series.includes("temp") && !isHidden("Temperature")) {
     pushLine("Temperature", hourly.temperature.map((v) => round1(cToDisplay(v, units))), palette.temp, gridIndex.temp, yIdx.temp, 2, {

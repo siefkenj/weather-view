@@ -5,6 +5,7 @@ import {
   fetchAirQuality,
   fetchEnsemble,
   fetchForecast,
+  fetchMinutely,
   type ForecastParams,
 } from "../api/openMeteo";
 import type { Place } from "../api/types";
@@ -38,6 +39,22 @@ export function useForecast(place: Place, options: ForecastOptions) {
       (options.extraModels ?? []).join(","),
     ],
     queryFn: ({ signal }) => fetchForecast(params, signal),
+    staleTime: TEN_MINUTES,
+    gcTime: 30 * 60 * 1000,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Near-term 15-minute data for the mini graph and zoomed-in meteogram. */
+export function useMinutely(place: Place, options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ["minutely", coordKey(place)],
+    queryFn: ({ signal }) =>
+      fetchMinutely(
+        { latitude: place.latitude, longitude: place.longitude, timezone: place.timezone },
+        signal,
+      ),
+    enabled: options.enabled ?? true,
     staleTime: TEN_MINUTES,
     gcTime: 30 * 60 * 1000,
     placeholderData: keepPreviousData,
