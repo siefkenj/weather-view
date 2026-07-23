@@ -39,7 +39,7 @@ export function DailyStrip({ summaries, units, selectedDate, todayKey, onSelect 
               <span className="day-card__weekday">{isToday ? "Today" : formatWeekday(d.date)}</span>
               <span className="day-card__md">{formatMonthDay(d.date)}</span>
             </div>
-            <WeatherIcon kind={wx.icon} size={42} title={wx.label} className="wx-chip" />
+            <WeatherIcon kind={wx.icon} size={42} title={wx.label} />
             <div className="day-card__temps">
               <span className="temp-hi">{formatTemp(d.tempMax, units)}</span>
               <span className="temp-lo">{formatTemp(d.tempMin, units)}</span>

@@ -26,6 +26,8 @@ export interface MeteogramInput {
   nowIso?: string | null;
   /** Add empty space at the top of the temp panel for the on-graph day tiles. */
   headroom?: boolean;
+  /** Live accessor for the currently hovered series name (bolded in the tooltip). */
+  getHovered?: () => string | null;
 }
 
 const round1 = (n: number) => (Number.isFinite(n) ? Math.round(n * 10) / 10 : NaN);
@@ -125,8 +127,8 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   const seriesList: SeriesOption[] = [];
   const shade = dayShadeMarkArea(time, palette, "xAxis");
   const firstOfPanel = new Set<number>();
-  // Shared hover emphasis: thicken the line, never blur its neighbours/shading.
-  const lineEmph = { focus: "none" as const, lineStyle: { width: 3.4 } };
+  // Emphasis off everywhere (see the line() helper); hover bolding is manual.
+  const lineEmph = { disabled: true as const };
 
   const line = (
     name: string,
@@ -148,9 +150,9 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       smooth: 0.2,
       lineStyle: { color, width: 2 },
       itemStyle: { color },
-      // focus:"none" so hovering a line never dims the other series or the
-      // per-day background shading; it only thickens the hovered line.
-      emphasis: { focus: "none", lineStyle: { width: 3.4 } },
+      // ECharts emphasis is disabled: the axis tooltip would otherwise bold every
+      // series at once. The one hovered line is thickened imperatively instead.
+      emphasis: { disabled: true },
       ...(attachShade ? { markArea: shade } : {}),
       ...extra,
     } as SeriesOption;
@@ -234,6 +236,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       xAxisIndex: gridIndex.precip,
       yAxisIndex: yIdx.precip,
       itemStyle: { color: palette.precip },
+      emphasis: { disabled: true },
       barMaxWidth: 6,
       z: 3,
     });
@@ -317,12 +320,18 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     formatter: (params: unknown) => {
       const arr = params as { seriesName: string; value: number; color: string; axisValue: string }[];
       if (!arr.length) return "";
+      const hovered = input.getHovered?.();
       const rows = arr
         .filter((p) => !p.seriesName.startsWith("_") && p.value != null && Number.isFinite(p.value))
         .map((p) => {
           const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px"></span>`;
           const suffix = unitFor[p.seriesName] ?? "";
-          return `<div style="display:flex;justify-content:space-between;gap:16px"><span>${dot}${p.seriesName}</span><b>${p.value}${suffix}</b></div>`;
+          const on = p.seriesName === hovered;
+          const row = `<span>${dot}${p.seriesName}</span><b>${p.value}${suffix}</b>`;
+          const style =
+            "display:flex;justify-content:space-between;gap:16px;border-radius:4px;padding:1px 4px;margin:0 -4px" +
+            (on ? `;background:${palette.axisLabel}22;font-weight:700` : "");
+          return `<div style="${style}">${row}</div>`;
         })
         .join("");
       return `<div style="font-weight:600;margin-bottom:4px">${tooltipHeader(arr[0].axisValue)}</div>${rows}`;

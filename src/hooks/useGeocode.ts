@@ -1,8 +1,10 @@
-// Debounced geocoding search for the city box.
+// Debounced geocoding search for the city box. Curated Ontario places (parks,
+// conservation areas, landmarks the geocoder misses) are merged in on top.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchGeocode } from "../api/openMeteo";
+import { curatedMatches, placeNameKey } from "../utils/curatedPlaces";
 
 function useDebounced<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -25,8 +27,16 @@ export function useGeocode(query: string) {
     staleTime: 24 * 60 * 60 * 1000,
   });
 
+  const apiResults = result.data?.results;
+  const results = useMemo(() => {
+    const curated = curatedMatches(debounced);
+    const seen = new Set(curated.map((c) => placeNameKey(c.name)));
+    const rest = (apiResults ?? []).filter((r) => !seen.has(placeNameKey(r.name)));
+    return [...curated, ...rest];
+  }, [debounced, apiResults]);
+
   return {
-    results: result.data?.results ?? [],
+    results,
     isLoading: enabled && result.isFetching,
     isActive: enabled,
   };

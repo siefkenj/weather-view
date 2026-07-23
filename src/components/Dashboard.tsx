@@ -3,9 +3,12 @@ import { flushSync } from "react-dom";
 import { CurrentConditions } from "./CurrentConditions";
 import { DailyStrip } from "./DailyStrip";
 import { Meteogram } from "./Meteogram";
+import { meteogramLegend } from "./meteogramOption";
 import { AirQualityPanel } from "./AirQualityPanel";
 import { useDashboardState } from "../hooks/useUrlState";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useTheme } from "../hooks/useTheme";
+import { chartPalette } from "../theme/palette";
 import { useAirQuality, useEnsemble, useForecast } from "../hooks/useWeather";
 import { MAX_FORECAST_DAYS, MAX_PAST_DAYS } from "../api/openMeteo";
 import { computeBands, recenterBandOnLine, type Bands } from "../api/ensemble";
@@ -72,8 +75,13 @@ function alignBands(windowTime: string[], bands: Bands): Bands {
 
 export function Dashboard({ place }: { place: Place }) {
   const { state, ...controls } = useDashboardState();
+  const { theme } = useTheme();
   const isNarrow = useMediaQuery("(max-width: 640px)");
   const portrait = useMediaQuery("(max-width: 640px) and (orientation: portrait)");
+  const legend = useMemo(
+    () => meteogramLegend({ series: state.series, panels: state.panels, palette: chartPalette(theme) }),
+    [state.series, state.panels, theme],
+  );
   const animRef = useRef<HTMLDivElement>(null);
   const busyRef = useRef(false);
   const [clipping, setClipping] = useState(false);
@@ -320,6 +328,17 @@ export function Dashboard({ place }: { place: Place }) {
             <span aria-hidden="true">›</span>
           </button>
         </div>
+
+        {legend.length ? (
+          <div className="chart-legend" role="list">
+            {legend.map((l) => (
+              <span key={l.name} role="listitem" className="legend-item">
+                <span className="legend-swatch" style={{ background: l.color }} />
+                {l.name}
+              </span>
+            ))}
+          </div>
+        ) : null}
 
         {ciEnabled ? (
           <p className="ci-note">
