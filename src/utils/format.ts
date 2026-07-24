@@ -34,6 +34,11 @@ export function formatTime(iso: string): string {
   return parseLocal(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+/** Compact clock for inline labels: "11:44 PM" → "11:44pm" (24h locales stay "23:44"). */
+export function formatClock(iso: string): string {
+  return formatTime(iso).replace(/\s+/g, "").toLowerCase();
+}
+
 export function formatFullDate(iso: string): string {
   return parseLocal(iso).toLocaleDateString(undefined, {
     weekday: "long",

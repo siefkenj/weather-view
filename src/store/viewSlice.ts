@@ -2,7 +2,7 @@
 // URL so the store and the address bar agree on the very first render (see
 // urlSync.ts for the bidirectional glue). The view is intentionally global rather
 // than per-location: when multiple locations become comparable, they share one
-// timeline (days / offset / units / series / panels).
+// timeline (days / viewStart / units / series / panels).
 
 import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import {
@@ -37,8 +37,8 @@ const viewSlice = createSlice({
     setDays(state, action: PayloadAction<number>) {
       state.days = action.payload;
     },
-    setOffset(state, action: PayloadAction<number>) {
-      state.offset = action.payload;
+    setViewStart(state, action: PayloadAction<string | null>) {
+      state.viewStart = action.payload;
     },
     setCi(state, action: PayloadAction<boolean>) {
       state.ci = action.payload;
@@ -61,7 +61,7 @@ const viewSlice = createSlice({
 export const {
   setView,
   setDays,
-  setOffset,
+  setViewStart,
   setCi,
   setUnits,
   setExtraModels,

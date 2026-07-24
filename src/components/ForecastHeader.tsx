@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { describeWeather } from "../api/weatherCode";
 import { WeatherIcon } from "./WeatherIcon";
-import { formatFullDate, formatMonthDay, formatTime, formatWeekday } from "../utils/format";
+import { formatFullDate, formatMonthDay, formatTime, formatWeekday, parseLocal } from "../utils/format";
 import { formatPrecip, formatTemp, type Units } from "../utils/units";
 import type { DailySummary } from "../utils/series";
 
@@ -9,9 +9,16 @@ interface Props {
   summaries: DailySummary[];
   units: Units;
   todayKey?: string;
+  /** First/last timestamps of the visible window (chart x-axis extent), so each
+   *  day tile can be positioned at its actual column — and slide with the chart
+   *  when the window is panned by a fraction of a day. */
+  windowStart: string;
+  windowEnd: string;
 }
 
 const CARD_HALF = 140; // half the popover width, for edge clamping
+const AXIS_GUTTER = 56; // matches the ECharts grid inset, so tiles line up with columns
+const DAY_MS = 86_400_000;
 
 /**
  * Integrated chart header: each day shows its date with the weather icon below
@@ -19,9 +26,25 @@ const CARD_HALF = 140; // half the popover width, for edge clamping
  * The 56px side padding matches the ECharts grid inset so days line up with the
  * chart columns below.
  */
-export function ForecastHeader({ summaries, units, todayKey }: Props) {
+export function ForecastHeader({ summaries, units, todayKey, windowStart, windowEnd }: Props) {
   const [hover, setHover] = useState<{ i: number; left: number } | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
+
+  // Map a day's noon onto the plot in the same linear way the chart's category axis
+  // does (first sample at the left inset, last at the right), so tiles track the
+  // columns exactly — including at fractional pan offsets.
+  const t0 = parseLocal(windowStart).getTime();
+  const t1 = parseLocal(windowEnd).getTime();
+  const span = t1 - t0 || 1;
+  const spanDays = Math.max(1, span / DAY_MS);
+  const cellStyle = (date: string): React.CSSProperties => {
+    const frac = (parseLocal(`${date}T12:00`).getTime() - t0) / span;
+    return {
+      position: "absolute",
+      left: `calc(${AXIS_GUTTER}px + ${frac} * (100% - ${2 * AXIS_GUTTER}px))`,
+      width: `calc((100% - ${2 * AXIS_GUTTER}px) / ${spanDays} - 4px)`,
+    };
+  };
 
   function open(i: number, target: HTMLElement) {
     const row = rowRef.current;
@@ -51,6 +74,7 @@ export function ForecastHeader({ summaries, units, todayKey }: Props) {
                 (isToday ? " fh-cell--today" : "") +
                 (hover?.i === i ? " fh-cell--active" : "")
               }
+              style={cellStyle(d.date)}
               onMouseEnter={(e) => open(i, e.currentTarget)}
               onMouseLeave={() => setHover(null)}
               onFocus={(e) => open(i, e.currentTarget)}

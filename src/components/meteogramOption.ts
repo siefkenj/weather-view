@@ -10,7 +10,7 @@ import type { ChartPalette } from "../theme/palette";
 import type { PanelKey, SeriesKey } from "../hooks/useUrlState";
 import { cToDisplay, PRECIP_UNIT, tempUnit, type Units } from "../utils/units";
 import { moistAirEnthalpy, wetBulbTemperature } from "../utils/psychro";
-import { formatDayShort, formatTime, parseLocal } from "../utils/format";
+import { formatClock, formatDayShort, formatTime, parseLocal } from "../utils/format";
 import { dayShadeMarkArea } from "./meteogramShading";
 import { computeHorizontalLayout, TEMP_HEADROOM } from "./meteogramLayout";
 import { aqhiCategory } from "../utils/aqhi";
@@ -320,14 +320,22 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   // "now" dashed vertical line. Snapped to the nearest grid category (so it lands
   // right on both the hourly and refined 15-minute axes) and drawn on EVERY panel
   // via a carrier series per grid (added after the data series). The "now" label
-  // shows once, on the temperature panel.
+  // shows once, at the TOP of the temperature panel, with the current clock time.
   const showNow = !!nowIso && nowIdx >= 0;
+  const nowLabel = nowIdx >= 0 ? `now (${formatClock(input.currentIso ?? time[nowIdx])})` : "now";
   const nowMark = (labeled: boolean) => ({
     symbol: "none" as const,
     silent: true,
     lineStyle: { color: palette.nowLine, type: "dashed" as const, width: 1.5 },
     label: labeled
-      ? { show: true, formatter: "now", color: palette.nowLine, position: "start" as const }
+      ? {
+          show: true,
+          formatter: nowLabel,
+          color: palette.nowLine,
+          position: "end" as const,
+          fontSize: 11,
+          fontWeight: 700,
+        }
       : { show: false },
     data: [{ xAxis: time[nowIdx] }],
   });

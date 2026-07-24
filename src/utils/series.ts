@@ -1,7 +1,7 @@
 // Reshape the forecast response into the windows the chart and daily strip use.
 
 import type { ForecastResponse } from "../api/types";
-import { dayKey } from "./format";
+import { addDays, dayKey } from "./format";
 
 export interface HourlyPoint {
   time: string[];
@@ -78,6 +78,20 @@ export function windowByDays(h: HourlyPoint, startKey: string, endKey: string): 
   if (start < 0) return sliceHourly(h, 0, 0);
   let end = start;
   while (end < h.time.length && dayKey(h.time[end]) <= endKey) end++;
+  return sliceHourly(h, start, end);
+}
+
+/**
+ * Slice the hourly block to `[startIso, startIso + days)`. Unlike `windowByDays`,
+ * the start may be a fractional time (continuous panning), so it compares the full
+ * ISO timestamps lexicographically — valid since all are zero-padded local ISO.
+ */
+export function windowByTime(h: HourlyPoint, startIso: string, days: number): HourlyPoint {
+  const endIso = `${addDays(dayKey(startIso), days)}T${startIso.slice(11) || "00:00"}`;
+  const start = h.time.findIndex((t) => t >= startIso);
+  if (start < 0) return sliceHourly(h, 0, 0);
+  let end = start;
+  while (end < h.time.length && h.time[end] < endIso) end++;
   return sliceHourly(h, start, end);
 }
 

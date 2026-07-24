@@ -47,7 +47,11 @@ export function useUrlSync() {
     const q = viewToQuery(parsed);
     if (q === lastSynced.current) return;
     lastSynced.current = q;
-    dispatch(setView(parsed));
+    // `viewStart` is session-only pan state that isn't in the URL — dropping it from
+    // the hydration keeps a live scroll position from being reset when some OTHER
+    // param (units, days, …) changes the query string.
+    const { viewStart: _viewStart, ...urlState } = parsed;
+    dispatch(setView(urlState));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 }

@@ -1,23 +1,19 @@
-import { useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { CurrentConditions } from "./CurrentConditions";
-import { DailyStrip } from "./DailyStrip";
 import { Meteogram } from "./Meteogram";
 import { meteogramLegend } from "./meteogramOption";
 import { AirQualityPanel } from "./AirQualityPanel";
 import { useDashboardState } from "../hooks/useUrlState";
-import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTheme } from "../hooks/useTheme";
 import { chartPalette } from "../theme/palette";
-import { useLocationWeather } from "../hooks/useWeather";
-import { MAX_FORECAST_DAYS, MAX_PAST_DAYS } from "../api/openMeteo";
+import { FULL_PAST_DAYS, useLocationWeather } from "../hooks/useWeather";
+import { MAX_FORECAST_DAYS } from "../api/openMeteo";
 import { computeBands, recenterBandOnLine } from "../api/ensemble";
 import {
   dailySummaries,
-  dayList,
   extractHourly,
   findNowIndex,
-  windowByDays,
+  windowByTime,
   type HourlyPoint,
 } from "../utils/series";
 import {
@@ -27,55 +23,58 @@ import {
   sliceFine,
   toFineSamples,
 } from "../utils/refine";
-import { addDays, dayKey, formatMonthDay, parseLocal } from "../utils/format";
+import { addDays, dayKey, formatMonthDay, parseLocal, todayInZone } from "../utils/format";
+import { arrowTarget, clampStartIso, shiftStart } from "../utils/pan";
 import { computeAqhiSeries } from "../utils/aqhi";
 import type { Place } from "../api/types";
 
-// Below this window width, the meteogram is refined onto the 15-minute grid
+// At/below this window width, the meteogram is refined onto the 15-minute grid
 // (native near-term data covers ~2 days; finer detail is invisible beyond that).
 const REFINE_MAX_DAYS = 2;
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
 const AXIS_GUTTER = 56; // matches the ECharts grid inset (left/right)
-
-/** Snapshot one side's axis gutter from the chart canvas as a fixed overlay. */
-function makeAxisMask(
-  canvas: HTMLCanvasElement,
-  side: "left" | "right",
-  topPx: number,
-  panelBg: string,
-): HTMLCanvasElement {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = rect.width > 0 ? canvas.width / rect.width : 1;
-  const gw = Math.round(AXIS_GUTTER * dpr);
-  const mask = document.createElement("canvas");
-  mask.className = "axis-mask";
-  mask.width = gw;
-  mask.height = Math.round(rect.height * dpr);
-  mask.style.width = `${AXIS_GUTTER}px`;
-  mask.style.height = `${rect.height}px`;
-  mask.style.top = `${topPx}px`;
-  mask.style[side] = "0";
-  const ctx = mask.getContext("2d");
-  if (ctx) {
-    // Opaque fill so plot lines sliding under the gutter stay hidden behind it.
-    ctx.fillStyle = panelBg;
-    ctx.fillRect(0, 0, mask.width, mask.height);
-    const sx = side === "left" ? 0 : canvas.width - gw;
-    ctx.drawImage(canvas, sx, 0, gw, mask.height, 0, 0, gw, mask.height);
-  }
-  return mask;
-}
+const DAY_MS = 86_400_000;
+const ARROW_TWEEN_MS = 240;
+// Narrow screens show fewer days so each stays at least this wide (readable tiles).
+const MIN_DAY_PX = 48;
 
 export function Dashboard({ place }: { place: Place }) {
   const { state, ...controls } = useDashboardState();
   const { theme } = useTheme();
-  const isNarrow = useMediaQuery("(max-width: 640px)");
-  const portrait = useMediaQuery("(max-width: 640px) and (orientation: portrait)");
-  const animRef = useRef<HTMLDivElement>(null);
-  const busyRef = useRef(false);
-  const [clipping, setClipping] = useState(false);
+  const animRef = useRef<HTMLDivElement | null>(null);
+  const roRef = useRef<ResizeObserver | null>(null);
+  const [chartWidth, setChartWidth] = useState(0);
+  // Callback ref on the chart element: keep `animRef` (for imperative reads) and a
+  // reactive width (to decide how many days fit) in sync via a ResizeObserver.
+  const setAnim = useCallback((el: HTMLDivElement | null) => {
+    animRef.current = el;
+    roRef.current?.disconnect();
+    roRef.current = null;
+    if (!el) return;
+    setChartWidth(el.offsetWidth);
+    const ro = new ResizeObserver(() => animRef.current && setChartWidth(animRef.current.offsetWidth));
+    ro.observe(el);
+    roRef.current = ro;
+  }, []);
+  const tweenRaf = useRef<number | null>(null);
+  // Live pan bookkeeping for an in-progress mouse/touch drag (see onPointer* below).
+  const gesture = useRef<{
+    x0: number;
+    dx: number;
+    started: boolean;
+    dayPx: number;
+    base: string;
+    minStart: string;
+    maxStart: string;
+    raf: number | null;
+  } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  // Local, uncommitted window start used while panning (drag or arrow tween). It
+  // overrides the committed `viewStart` so the chart re-renders with real data as
+  // you scroll, without touching redux/URL until the motion settles.
+  const [dragStart, setDragStart] = useState<string | null>(null);
   // Panel sub-lines hidden via the legend (temperature series use state.series).
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const toggleHidden = (name: string) =>
@@ -86,17 +85,35 @@ export function Dashboard({ place }: { place: Place }) {
       return next;
     });
 
-  const windowDays = state.days;
-  const offset = state.offset;
+  // Cap the visible days so each column stays at least MIN_DAY_PX wide — a thin
+  // screen shows fewer days rather than squeezing them illegibly. Before the chart
+  // is measured (chartWidth 0) we fall back to the requested count.
+  const plotW = chartWidth - 2 * AXIS_GUTTER;
+  const maxDays = plotW > 0 ? Math.max(1, Math.floor(plotW / MIN_DAY_PX)) : state.days;
+  const windowDays = Math.min(state.days, maxDays);
   const ciEnabled = state.ci;
   const airEnabled = state.panels.includes("air");
 
+  // What the first (fast) load must cover: the visible window, expressed relative to
+  // today (estimated from the location's zone before any data has arrived). On a
+  // fresh load that's just today → today + days; a restored/scrolled URL widens it.
+  const initial = useMemo(() => {
+    const today = todayInZone(place.timezone);
+    const startDay = state.viewStart ? dayKey(state.viewStart) : today;
+    const endDay = addDays(startDay, windowDays);
+    const fwd = Math.round((parseLocal(endDay).getTime() - parseLocal(today).getTime()) / DAY_MS);
+    const back = Math.round((parseLocal(today).getTime() - parseLocal(startDay).getTime()) / DAY_MS);
+    return {
+      initialForecastDays: clamp(fwd + 1, windowDays, MAX_FORECAST_DAYS),
+      initialPastDays: clamp(back + 1, 0, FULL_PAST_DAYS),
+    };
+  }, [place.timezone, state.viewStart, windowDays]);
+
   // All weather for this location, grouped as sub-objects under its lon,lat key.
   // Each field is an independent RTK Query result (own data/loading/error); the
-  // whole timeline (92 days history → 16-day forecast) is fetched up front so
-  // scrolling just slices a window and never refetches. `ci`/`air` gate the two
-  // optional sources.
-  const wx = useLocationWeather(place, { ci: ciEnabled, air: airEnabled });
+  // forecast loads in two stages (visible window first, then the whole range).
+  // `ci`/`air` gate the two optional sources.
+  const wx = useLocationWeather(place, { ci: ciEnabled, air: airEnabled, ...initial });
   const forecastQ = wx.forecast;
   const ensembleQ = wx.ensemble;
   const airQ = wx.airQuality;
@@ -112,34 +129,36 @@ export function Dashboard({ place }: { place: Place }) {
   const summaries = useMemo(() => (forecast ? dailySummaries(forecast) : []), [forecast]);
   const todayKey = forecast ? dayKey(forecast.current.time) : "";
 
-  // Resolve the window against the days we actually have, so it stays full-width
-  // and never runs past either end of the fetched range.
+  // Resolve the window's left edge (a continuous datetime) against the data we have,
+  // so it stays full-width and never runs past either end of the fetched range.
+  // `dragStart` (a live pan) takes precedence over the committed `viewStart`; `null`
+  // = auto-anchor to today. Clamped here where the fetched range is known.
+  const activeViewStart = dragStart ?? state.viewStart;
   const win = useMemo(() => {
-    if (!full) return null;
-    const days = dayList(full);
-    if (days.length === 0) return null;
-    const todayIdx = Math.max(0, days.indexOf(todayKey));
-    const maxStart = Math.max(0, days.length - windowDays);
-    const startIdx = clamp(todayIdx + offset, 0, maxStart);
-    const endIdx = Math.min(startIdx + windowDays - 1, days.length - 1);
-    return { startKey: days[startIdx], endKey: days[endIdx] };
-  }, [full, todayKey, offset, windowDays]);
+    if (!full || full.time.length === 0) return null;
+    const firstDay = dayKey(full.time[0]);
+    const lastDay = dayKey(full.time[full.time.length - 1]);
+    const minStart = `${firstDay}T00:00`;
+    const maxDay = addDays(lastDay, -(windowDays - 1));
+    const maxStart = maxDay > firstDay ? `${maxDay}T00:00` : minStart;
+    const candidate = activeViewStart ?? `${todayKey || firstDay}T00:00`;
+    return { start: clampStartIso(candidate, minStart, maxStart), minStart, maxStart };
+  }, [full, todayKey, activeViewStart, windowDays]);
 
   const hourly: HourlyPoint | null = useMemo(
-    () => (full && win ? windowByDays(full, win.startKey, win.endKey) : null),
-    [full, win],
+    () => (full && win ? windowByTime(full, win.start, windowDays) : null),
+    [full, win, windowDays],
   );
 
   // When zoomed in (≤2 days) and 15-min data covers the window, refine the whole
-  // window onto the 15-minute grid — native temperature / feels-like / precip,
-  // the rest interpolated. Skipped in portrait (the transposed chart keeps its
-  // hourly assumptions) and falls back to hourly when uncovered. Everything below
-  // aligns to chartHourly.time so bands and AQHI ride the same grid.
+  // window onto the 15-minute grid — native temperature / feels-like / precip, the
+  // rest interpolated. Falls back to hourly when uncovered. Everything below aligns
+  // to chartHourly.time so bands and AQHI ride the same grid.
   const chartHourly: HourlyPoint | null = useMemo(() => {
     if (!hourly) return null;
-    if (portrait || windowDays > REFINE_MAX_DAYS || !fine) return hourly;
+    if (windowDays > REFINE_MAX_DAYS || !fine) return hourly;
     return refineHourlyWindow(hourly, fine) ?? hourly;
-  }, [hourly, portrait, windowDays, fine]);
+  }, [hourly, windowDays, fine]);
   const refined = !!chartHourly && !!hourly && chartHourly !== hourly;
 
   const tempBand = useMemo(() => {
@@ -234,84 +253,119 @@ export function Dashboard({ place }: { place: Place }) {
   }
 
   const today = summaries.find((s) => s.date === todayKey);
-  const startKey = win?.startKey ?? todayKey;
-  const endKey = win?.endKey ?? todayKey;
+  const startKey = win ? dayKey(win.start) : todayKey;
+  const lastTime = hourly && hourly.time.length ? hourly.time[hourly.time.length - 1] : null;
+  const endKey = lastTime ? dayKey(lastTime) : startKey;
   const windowSummaries = summaries.filter((s) => s.date >= startKey && s.date <= endKey);
-  const nowInWindow = todayKey >= startKey && todayKey <= endKey;
-  const nowIso = nowInWindow ? forecast.current.time : null;
+  const curTime = forecast.current.time;
+  const nowInWindow =
+    !!hourly && hourly.time.length > 0 && curTime >= hourly.time[0] && curTime <= hourly.time[hourly.time.length - 1];
+  const nowIso = nowInWindow ? curTime : null;
 
-  // Scroll bounds against the absolute available range (past 92 → future 16).
-  const minOffset = -MAX_PAST_DAYS;
-  const maxOffset = Math.max(0, MAX_FORECAST_DAYS - windowDays);
-  const step = Math.max(1, Math.min(2, windowDays));
+  const anchored = state.viewStart == null && dragStart == null;
+  const atStart = win ? win.start <= win.minStart : true;
+  const atEnd = win ? win.start >= win.maxStart : true;
 
-  // Pan the window by a couple of days. Only the plot slides — the axis scales
-  // stay put: the sliding chart's own gutters are clipped out and replaced by
-  // fixed snapshots of the settled (already-rescaled) axes. So the axes may snap
-  // to a new scale, then the ~8 overlapping days of a 10-day window glide over.
-  function slide(dir: number) {
-    const dest = clamp(offset + dir * step, minOffset, maxOffset);
-    if (busyRef.current || dest === offset) return;
+  // ---- Panning ---------------------------------------------------------
+  // Both the drag and the arrow tween pan by re-rendering the window live (the chart
+  // always shows the data that's loaded — no blank block). The committed viewStart
+  // is written to redux/URL only when the motion settles.
+
+  /** Grid px per day at the current resolution (24 hourly / 96 on the 15-min grid). */
+  function dayPx(): number | null {
     const el = animRef.current;
-    const viewport = el?.parentElement;
     const t = chartHourly?.time ?? [];
     const n = t.length;
     const plotW = (el?.offsetWidth ?? 0) - 2 * AXIS_GUTTER;
-    // Vertical (portrait) layout or an unmeasurable chart → just swap, no slide.
-    if (portrait || !el || !viewport || plotW <= 0 || n < 2) {
-      controls.setOffset(dest);
-      return;
-    }
-    // Grid points per day (24 hourly, 96 on the refined 15-min grid) so the shift
-    // distance is right at either resolution.
+    if (n < 2 || plotW <= 0) return null;
     const stepMin = (parseLocal(t[1]).getTime() - parseLocal(t[0]).getTime()) / 60000;
-    const perDay = stepMin > 0 ? Math.round(1440 / stepMin) : 24;
-    const delta = ((Math.abs(dest - offset) * perDay) / (n - 1)) * plotW;
-    busyRef.current = true;
-    setClipping(true);
-    // Swap to the destination window synchronously so the snapshot below captures
-    // the final, already-rescaled axes.
-    flushSync(() => controls.setOffset(dest));
+    const perDay = stepMin > 0 ? 1440 / stepMin : 24;
+    return (perDay / (n - 1)) * plotW;
+  }
 
-    const canvas = el.querySelector("canvas") as HTMLCanvasElement | null;
-    const masks: HTMLCanvasElement[] = [];
-    if (canvas) {
-      const panelBg =
-        getComputedStyle(el.closest(".panel") ?? el).backgroundColor || "#fff";
-      const top = canvas.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
-      masks.push(makeAxisMask(canvas, "left", top, panelBg));
-      masks.push(makeAxisMask(canvas, "right", top, panelBg));
-      masks.forEach((m) => viewport.appendChild(m));
-      // Hide the chart's own (moving) gutters so only the plot band slides.
-      el.style.clipPath = `inset(0 ${AXIS_GUTTER}px 0 ${AXIS_GUTTER}px)`;
-    }
+  const cancelTween = () => {
+    if (tweenRaf.current != null) cancelAnimationFrame(tweenRaf.current);
+    tweenRaf.current = null;
+  };
 
-    el.style.transition = "none";
-    el.style.transform = `translateX(${dir * delta}px)`;
-    void el.offsetWidth; // reflow so the start offset takes before the transition
-    el.style.transition = "transform 200ms ease-out";
-    el.style.transform = "translateX(0)";
-    let settled = false;
-    const done = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(fallback);
-      el.removeEventListener("transitionend", done);
-      el.style.transition = "";
-      el.style.transform = "";
-      el.style.clipPath = "";
-      masks.forEach((m) => m.remove());
-      setClipping(false);
-      busyRef.current = false;
+  // Arrow buttons: ease a day-quantised (≥12.5h) jump, re-rendering each frame, then
+  // commit on settle.
+  function pan(dir: number) {
+    if (gesture.current || tweenRaf.current != null || !win) return;
+    const target = clampStartIso(arrowTarget(win.start, dir), win.minStart, win.maxStart);
+    if (target === win.start) return;
+    const from = win.start;
+    const { minStart: lo, maxStart: hi } = win;
+    const totalDays = (parseLocal(target).getTime() - parseLocal(from).getTime()) / DAY_MS;
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / ARROW_TWEEN_MS);
+      const ease = 1 - Math.pow(1 - p, 3);
+      if (p < 1) {
+        setDragStart(clampStartIso(shiftStart(from, totalDays * ease), lo, hi));
+        tweenRaf.current = requestAnimationFrame(step);
+      } else {
+        tweenRaf.current = null;
+        controls.setViewStart(target);
+        setDragStart(null);
+      }
     };
-    const fallback = setTimeout(done, 320); // in case transitionend never fires
-    el.addEventListener("transitionend", done);
+    tweenRaf.current = requestAnimationFrame(step);
+  }
+
+  // Mouse/touch drag: pan continuously; the gesture starts once the pointer moves
+  // past a small threshold (so a plain click doesn't trigger it). Pointer-moves are
+  // coalesced to one re-render per animation frame.
+  function onPointerDown(e: React.PointerEvent) {
+    if (e.button !== 0 || gesture.current || tweenRaf.current != null || !win) return;
+    const px = dayPx();
+    if (px == null) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    gesture.current = {
+      x0: e.clientX,
+      dx: 0,
+      started: false,
+      dayPx: px,
+      base: win.start,
+      minStart: win.minStart,
+      maxStart: win.maxStart,
+      raf: null,
+    };
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    const g = gesture.current;
+    if (!g) return;
+    g.dx = e.clientX - g.x0;
+    if (!g.started) {
+      if (Math.abs(g.dx) < 4) return;
+      g.started = true;
+      setDragging(true);
+    }
+    if (g.raf == null) {
+      g.raf = requestAnimationFrame(() => {
+        const gg = gesture.current;
+        if (!gg) return;
+        gg.raf = null;
+        setDragStart(clampStartIso(shiftStart(gg.base, -gg.dx / gg.dayPx), gg.minStart, gg.maxStart));
+      });
+    }
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    const g = gesture.current;
+    if (!g) return;
+    gesture.current = null;
+    if (g.raf != null) cancelAnimationFrame(g.raf);
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    if (!g.started) return; // was a click, not a pan
+    setDragging(false);
+    const final = clampStartIso(shiftStart(g.base, -g.dx / g.dayPx), g.minStart, g.maxStart);
+    controls.setViewStart(final);
+    setDragStart(null);
   }
 
   const hasHourly = !!chartHourly && chartHourly.time.length > 0;
-  // Wide screens draw the day/date + icon on the temperature graph (hover a day
-  // for the full card). Narrow screens keep the standalone strip.
-  const integrated = !isNarrow;
   const emptyState = <div className="state state--empty">No data for this range.</div>;
 
   return (
@@ -330,8 +384,12 @@ export function Dashboard({ place }: { place: Place }) {
           <button
             type="button"
             className="meteogram-nav__range"
-            onClick={() => controls.setOffset(0)}
-            disabled={offset === 0}
+            onClick={() => {
+              cancelTween();
+              setDragStart(null);
+              controls.setViewStart(null);
+            }}
+            disabled={anchored}
             title="Jump back to today"
           >
             {formatMonthDay(startKey)} – {formatMonthDay(endKey)}
@@ -343,24 +401,26 @@ export function Dashboard({ place }: { place: Place }) {
           ) : null}
         </div>
 
-        {!integrated ? (
-          <DailyStrip summaries={windowSummaries} units={state.units} todayKey={todayKey} />
-        ) : null}
-
         <div className="meteogram-scroller">
           <button
             type="button"
             className="scroll-edge"
-            onClick={() => slide(-1)}
-            disabled={offset <= minOffset}
+            onClick={() => pan(-1)}
+            disabled={atStart}
             aria-label="Scroll to earlier days"
             title="Earlier days — scroll back through recorded history"
           >
             <span aria-hidden="true">‹</span>
           </button>
 
-          <div className={"meteogram-viewport" + (clipping ? " is-clipping" : "")}>
-            <div className="meteogram-anim" ref={animRef}>
+          <div
+            className={"meteogram-viewport" + (dragging ? " is-dragging" : "")}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          >
+            <div className="meteogram-anim" ref={setAnim}>
               {hasHourly ? (
                 <Meteogram
                   hourly={chartHourly!}
@@ -371,8 +431,7 @@ export function Dashboard({ place }: { place: Place }) {
                   precipBand={precipBand}
                   nowIso={nowIso}
                   currentIso={forecast.current.time}
-                  vertical={portrait}
-                  daily={integrated ? windowSummaries : undefined}
+                  daily={windowSummaries}
                   todayKey={todayKey}
                   hidden={[...hidden]}
                   aqhi={aqhiWindow}
@@ -386,8 +445,8 @@ export function Dashboard({ place }: { place: Place }) {
           <button
             type="button"
             className="scroll-edge"
-            onClick={() => slide(1)}
-            disabled={offset >= maxOffset}
+            onClick={() => pan(1)}
+            disabled={atEnd}
             aria-label="Scroll to later days"
             title="Later days — scroll forward through the forecast"
           >

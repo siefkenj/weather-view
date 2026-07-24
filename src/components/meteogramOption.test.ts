@@ -154,6 +154,23 @@ describe("buildMeteogramOption", () => {
     expect(temps[0].lineStyle?.width).toBeLessThan(2); // thinned (past)
   });
 
+  it("labels the 'now' line with the clock time at the top of the temp panel", () => {
+    const opt = buildMeteogramOption({
+      ...base,
+      series: [...base.series],
+      panels: [...base.panels],
+      currentIso: "2026-07-22T11:00",
+    });
+    const nowSeries = (opt.series as { name: string; markLine?: { label?: { show?: boolean; position?: string; formatter?: string } } }[])
+      .filter((s) => s.name === "_now");
+    expect(nowSeries.length).toBeGreaterThan(0);
+    const labeled = nowSeries.find((s) => s.markLine?.label?.show);
+    expect(labeled?.markLine?.label?.position).toBe("end"); // top of the vertical line
+    expect(labeled?.markLine?.label?.formatter).toMatch(/^now \(.+\)$/); // e.g. "now (11:00am)"
+    // Exactly one panel carries the label (the temperature panel).
+    expect(nowSeries.filter((s) => s.markLine?.label?.show).length).toBe(1);
+  });
+
   it("colours series and legend from one central map, unaffected by CI bands", () => {
     const palette = chartPalette("light");
     const central = seriesColor(palette);

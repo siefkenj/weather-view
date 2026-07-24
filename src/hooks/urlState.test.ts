@@ -7,7 +7,7 @@ describe("parseState", () => {
   it("returns defaults for an empty query string", () => {
     const s = parse("");
     expect(s.days).toBe(10);
-    expect(s.offset).toBe(0);
+    expect(s.viewStart).toBeNull();
     expect(s.series).toEqual(["temp", "feels"]);
     expect(s.panels).toEqual(["precip", "atmo", "air"]);
     expect(s.ci).toBe(false);
@@ -15,20 +15,19 @@ describe("parseState", () => {
   });
 
   it("reads explicit visibility state", () => {
-    const s = parse("days=5&offset=-6&layers=temp&panels=precip,air&ci=1&units=imperial");
+    const s = parse("days=5&layers=temp&panels=precip,air&ci=1&units=imperial");
     expect(s.days).toBe(5);
-    expect(s.offset).toBe(-6);
     expect(s.series).toEqual(["temp"]);
     expect(s.panels).toEqual(["precip", "air"]);
     expect(s.ci).toBe(true);
     expect(s.units).toBe("imperial");
   });
 
-  it("clamps days and offset and drops invalid layer tokens", () => {
+  it("clamps days, ignores any `start` param, and drops invalid tokens", () => {
     expect(parse("days=99").days).toBe(16);
     expect(parse("days=0").days).toBe(1);
-    expect(parse("offset=-999").offset).toBe(-92); // -MAX_PAST_DAYS
-    expect(parse("offset=999").offset).toBe(15); // MAX_FORECAST_DAYS - 1
+    // viewStart is session-only pan state — never read from the URL.
+    expect(parse("start=2026-07-20T06:30").viewStart).toBeNull();
     expect(parse("layers=temp,bogus").series).toEqual(["temp"]);
   });
 });

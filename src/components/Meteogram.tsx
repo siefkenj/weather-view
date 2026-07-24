@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { buildMeteogramOption } from "./meteogramOption";
-import { buildVerticalMeteogramOption } from "./meteogramVertical";
 import { ForecastHeader } from "./ForecastHeader";
 import { computeHorizontalLayout, tempTopEmptyFraction } from "./meteogramLayout";
 import { useECharts } from "../hooks/useECharts";
@@ -22,10 +21,8 @@ interface Props {
   /** The real current time (always) — hides chance-of-precip for past hours. */
   currentIso?: string | null;
   height?: number;
-  /** Transposed (time runs top-to-bottom) for small portrait screens. */
-  vertical?: boolean;
-  /** When provided (horizontal only), day/date + icon are drawn on the graph,
-   *  in the headroom at the top of the temperature panel. */
+  /** When provided, day/date + icon are drawn on the graph, in the headroom at the
+   *  top of the temperature panel. */
   daily?: DailySummary[];
   todayKey?: string;
   /** Series names hidden via the legend. */
@@ -46,14 +43,13 @@ export function Meteogram({
   nowIso,
   currentIso,
   height = 520,
-  vertical = false,
   daily,
   todayKey,
   hidden,
   aqhi,
 }: Props) {
   const { theme } = useTheme();
-  const integrated = !vertical && !!daily && daily.length > 0;
+  const integrated = !!daily && daily.length > 0;
   const palette = chartPalette(theme);
   // Drop the air panel when there's no AQHI data for this window.
   const effPanels = aqhi ? panels : panels.filter((p) => p !== "air");
@@ -63,8 +59,7 @@ export function Meteogram({
   const getHovered = useCallback(() => hoveredRef.current, []);
 
   const option = useMemo(() => {
-    const build = vertical ? buildVerticalMeteogramOption : buildMeteogramOption;
-    return build({
+    return buildMeteogramOption({
       hourly,
       palette,
       units,
@@ -80,7 +75,7 @@ export function Meteogram({
       aqhi,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hourly, units, series.join(","), effPanels.join(","), tempBand, precipBand, nowIso, currentIso, theme, vertical, integrated, (hidden ?? []).join(","), aqhi]);
+  }, [hourly, units, series.join(","), effPanels.join(","), tempBand, precipBand, nowIso, currentIso, theme, integrated, (hidden ?? []).join(","), aqhi]);
 
   const { containerRef: ref, chartRef } = useECharts(option);
 
@@ -133,11 +128,7 @@ export function Meteogram({
     };
   }, [chartRef, applyHover]);
 
-  const resolvedHeight = vertical
-    ? Math.min(Math.max(hourly.time.length * 3.4, 460), 1500)
-    : integrated
-      ? 560
-      : height;
+  const resolvedHeight = integrated ? 560 : height;
 
   // Where the on-graph tiles sit: the empty band at the top of the temp panel.
   const band = useMemo(() => {
@@ -150,13 +141,19 @@ export function Meteogram({
     <div className="meteogram-graph" style={{ position: "relative" }}>
       <div
         ref={ref}
-        className={"meteogram" + (vertical ? " meteogram--vertical" : "")}
+        className="meteogram"
         style={{ height: resolvedHeight }}
         aria-label="Weather meteogram"
       />
       {integrated && band && daily ? (
         <div className="graph-dates" style={{ top: `${band.top}%`, height: `${band.height}%` }}>
-          <ForecastHeader summaries={daily} units={units} todayKey={todayKey} />
+          <ForecastHeader
+            summaries={daily}
+            units={units}
+            todayKey={todayKey}
+            windowStart={hourly.time[0]}
+            windowEnd={hourly.time[hourly.time.length - 1]}
+          />
         </div>
       ) : null}
     </div>

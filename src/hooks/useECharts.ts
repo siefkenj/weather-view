@@ -27,6 +27,9 @@ export function useECharts(option: EChartsOption | null) {
     };
   }, []);
 
+  // The pan gesture flushSync-swaps the window before releasing the transform;
+  // flushSync also flushes this passive effect, so the destination render is in
+  // place synchronously and the hand-off is seamless.
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;

@@ -3,7 +3,7 @@
 // itself lives in the hash path. Parsing/serialising lives here so the Redux
 // slice, the URL<->store sync glue, and the tests all share one implementation.
 
-import { MAX_FORECAST_DAYS, MAX_PAST_DAYS } from "../api/openMeteo";
+import { MAX_FORECAST_DAYS } from "../api/openMeteo";
 import type { Units } from "../utils/units";
 
 export type SeriesKey = "temp" | "feels" | "dew" | "wetbulb" | "enthalpy";
@@ -23,8 +23,14 @@ const DEFAULT_SERIES: SeriesKey[] = ["temp", "feels"];
 export interface DashboardState {
   /** Visible window width, in days. */
   days: number;
-  /** Window's left edge as an offset in days from today; negative = history. */
-  offset: number;
+  /**
+   * The window's left edge as a local ISO datetime ("YYYY-MM-DDTHH:mm"), or `null`
+   * to auto-anchor to today. Continuous (any value while dragging); day-quantised
+   * when the arrows are pressed. Clamped to the fetched data range at read time (the
+   * range isn't known here — see the Dashboard). This is session-only pan state and
+   * is deliberately NOT persisted to the URL, so it never appears in parse/serialize.
+   */
+  viewStart: string | null;
   series: SeriesKey[];
   panels: PanelKey[];
   ci: boolean;
@@ -34,13 +40,14 @@ export interface DashboardState {
 
 export const DEFAULTS: DashboardState = {
   days: DEFAULT_WINDOW_DAYS,
-  offset: 0,
+  viewStart: null,
   series: DEFAULT_SERIES,
   panels: ALL_PANELS,
   ci: false,
   extraModels: [],
   units: "metric",
 };
+
 
 const clampNum = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
@@ -60,12 +67,6 @@ export function parseState(params: URLSearchParams): DashboardState {
     ? clampNum(Math.round(daysRaw), 1, MAX_FORECAST_DAYS)
     : DEFAULTS.days;
 
-  const offsetParam = params.get("offset");
-  const offsetRaw = offsetParam == null || offsetParam === "" ? 0 : Number(offsetParam);
-  const offset = Number.isFinite(offsetRaw)
-    ? clampNum(Math.round(offsetRaw), -MAX_PAST_DAYS, MAX_FORECAST_DAYS - 1)
-    : DEFAULTS.offset;
-
   const series = parseCsv(params.get("layers"), ALL_SERIES) ?? DEFAULTS.series;
   const panels = parseCsv(params.get("panels"), ALL_PANELS) ?? DEFAULTS.panels;
 
@@ -81,7 +82,7 @@ export function parseState(params: URLSearchParams): DashboardState {
 
   return {
     days,
-    offset,
+    viewStart: null, // session-only pan state; never read from the URL
     series,
     panels,
     ci: params.get("ci") === "1",
@@ -93,7 +94,6 @@ export function parseState(params: URLSearchParams): DashboardState {
 export function serializeState(state: DashboardState): URLSearchParams {
   const params = new URLSearchParams();
   if (state.days !== DEFAULTS.days) params.set("days", String(state.days));
-  if (state.offset !== DEFAULTS.offset) params.set("offset", String(state.offset));
   if (!sameSet(state.series, DEFAULTS.series)) params.set("layers", state.series.join(","));
   if (!sameSet(state.panels, DEFAULTS.panels)) params.set("panels", state.panels.join(","));
   if (state.ci) params.set("ci", "1");

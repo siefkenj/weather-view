@@ -39,7 +39,7 @@ describe("urlState round-trip", () => {
   it("serialize → parse preserves non-default state", () => {
     const state = {
       days: 5,
-      offset: -6,
+      viewStart: null, // session-only; not serialized, so it round-trips as null
       series: ["temp" as const],
       panels: ["precip" as const, "air" as const],
       ci: true,

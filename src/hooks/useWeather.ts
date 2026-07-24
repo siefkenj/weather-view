@@ -3,7 +3,7 @@
 // unchanged and re-add the one TanStack behaviour we relied on: keeping the last
 // data on screen while a new fetch is in flight (`keepPreviousData`).
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   placeKey,
   useAirQualityQuery,
@@ -11,8 +11,11 @@ import {
   useForecastQuery,
   useMinutelyQuery,
 } from "../store/openMeteoApi";
-import { MAX_FORECAST_DAYS, MAX_PAST_DAYS } from "../api/openMeteo";
+import { MAX_FORECAST_DAYS } from "../api/openMeteo";
 import type { Place } from "../api/types";
+
+/** How far into the past the full (stage-2) load reaches. */
+export const FULL_PAST_DAYS = 20;
 
 export interface ForecastOptions {
   forecastDays: number;
@@ -90,21 +93,48 @@ export function useAirQuality(
 /** Air quality reaches ~7 days out on Open-Meteo. */
 const AIR_FORECAST_DAYS = 7;
 
+interface LocationOptions {
+  ci?: boolean;
+  air?: boolean;
+  /** Days to fetch forward/back on the FIRST (fast) load — the visible window. */
+  initialForecastDays?: number;
+  initialPastDays?: number;
+}
+
 /**
  * All weather for one location, grouped as sub-objects under its `lon,lat` key.
  * The cache stays normalized per source (each field is an independent RTK Query
  * result with its own data/loading/error/refetch); this hook is just the grouped
  * *read* view. `ci` and `air` gate the two optional (skippable) sources.
+ *
+ * Forecast loading is **staged**: the first request covers just the visible window
+ * (current day + the other visible days) for a fast first paint, then — once that
+ * lands — the range expands to the whole forecast + {@link FULL_PAST_DAYS} of past
+ * days in the background. The endpoint is location-keyed and refetches into the same
+ * entry when the range grows (forceRefetch), and `useForecast` keeps the stage-1
+ * data on screen until the full range arrives.
  */
-export function useLocationWeather(place: Place, options: { ci?: boolean; air?: boolean } = {}) {
+export function useLocationWeather(place: Place, options: LocationOptions = {}) {
+  const [loadFull, setLoadFull] = useState(false);
+  const forecastDays = loadFull
+    ? MAX_FORECAST_DAYS
+    : Math.min(MAX_FORECAST_DAYS, options.initialForecastDays ?? MAX_FORECAST_DAYS);
+  const pastDays = loadFull ? FULL_PAST_DAYS : Math.min(FULL_PAST_DAYS, options.initialPastDays ?? 0);
+  const forecast = useForecast(place, { forecastDays, pastDays });
+
+  // Expand to the full range once the visible window has painted.
+  useEffect(() => {
+    if (!loadFull && forecast.data) setLoadFull(true);
+  }, [loadFull, forecast.data]);
+
   return {
     key: placeKey({ latitude: place.latitude, longitude: place.longitude }),
-    forecast: useForecast(place, { forecastDays: MAX_FORECAST_DAYS, pastDays: MAX_PAST_DAYS }),
+    forecast,
     minutely: useMinutely(place),
     ensemble: useEnsemble(place, { forecastDays: MAX_FORECAST_DAYS, enabled: !!options.ci }),
     airQuality: useAirQuality(place, {
       forecastDays: AIR_FORECAST_DAYS,
-      pastDays: MAX_PAST_DAYS,
+      pastDays: FULL_PAST_DAYS,
       enabled: !!options.air,
     }),
   };

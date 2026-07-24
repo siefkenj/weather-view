@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LayerControls } from "./LayerControls";
+import { WeatherIcon } from "./WeatherIcon";
 import { useDashboardState } from "../hooks/useUrlState";
 import { useTheme } from "../hooks/useTheme";
 
@@ -46,6 +47,11 @@ export function SettingsMenu() {
 
       {open ? (
         <div className="settings__menu" role="dialog" aria-label="Settings">
+          <div className="settings__brand">
+            <WeatherIcon kind="partly-cloudy" size={22} title="Weather View" className="brand__mark" />
+            <span className="brand__name">Weather View</span>
+          </div>
+
           <div className="settings__section">
             <span className="settings__heading">Theme</span>
             <div className="controls__group segmented" role="group" aria-label="Theme">
