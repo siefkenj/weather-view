@@ -20,6 +20,11 @@ export interface ForecastOptions {
   extraModels?: string[];
 }
 
+// Refresh the near-term data (and with it the "now" marker + current readings)
+// every 10 minutes, but not while the tab is in the background.
+const POLL_MS = 10 * 60 * 1000;
+const poll = { pollingInterval: POLL_MS, skipPollingIfUnfocused: true } as const;
+
 /** Retain the last defined data while a refetch is in flight (parity with the old
  *  `placeholderData: keepPreviousData`). Nothing is retained while a query is
  *  skipped/idle, so disabled panels don't show stale data. */
@@ -30,21 +35,24 @@ function useKeepData<T>(data: T | undefined, isFetching: boolean): T | undefined
 }
 
 export function useForecast(place: Place, options: ForecastOptions) {
-  const r = useForecastQuery({
-    latitude: place.latitude,
-    longitude: place.longitude,
-    timezone: place.timezone,
-    forecastDays: options.forecastDays,
-    pastDays: options.pastDays,
-    extraModels: options.extraModels,
-  });
+  const r = useForecastQuery(
+    {
+      latitude: place.latitude,
+      longitude: place.longitude,
+      timezone: place.timezone,
+      forecastDays: options.forecastDays,
+      pastDays: options.pastDays,
+      extraModels: options.extraModels,
+    },
+    poll,
+  );
   return { ...r, data: useKeepData(r.data, r.isFetching) };
 }
 
 export function useMinutely(place: Place, options: { enabled?: boolean } = {}) {
   const r = useMinutelyQuery(
     { latitude: place.latitude, longitude: place.longitude, timezone: place.timezone },
-    { skip: options.enabled === false },
+    { skip: options.enabled === false, ...poll },
   );
   return { ...r, data: useKeepData(r.data, r.isFetching) };
 }
