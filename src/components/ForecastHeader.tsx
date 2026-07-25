@@ -17,7 +17,6 @@ interface Props {
 }
 
 const CARD_HALF = 140; // half the popover width, for edge clamping
-const AXIS_GUTTER = 56; // matches the ECharts grid inset, so tiles line up with columns
 const DAY_MS = 86_400_000;
 
 /**
@@ -37,12 +36,14 @@ export function ForecastHeader({ summaries, units, todayKey, windowStart, window
   const t1 = parseLocal(windowEnd).getTime();
   const span = t1 - t0 || 1;
   const spanDays = Math.max(1, span / DAY_MS);
+  // The row is inset to the plot region (56px gutters), so positions are relative to
+  // the plot: frac 0 → left edge, frac 1 → right edge.
   const cellStyle = (date: string): React.CSSProperties => {
     const frac = (parseLocal(`${date}T12:00`).getTime() - t0) / span;
     return {
       position: "absolute",
-      left: `calc(${AXIS_GUTTER}px + ${frac} * (100% - ${2 * AXIS_GUTTER}px))`,
-      width: `calc((100% - ${2 * AXIS_GUTTER}px) / ${spanDays} - 4px)`,
+      left: `calc(${frac} * 100%)`,
+      width: `calc(100% / ${spanDays} - 4px)`,
     };
   };
 

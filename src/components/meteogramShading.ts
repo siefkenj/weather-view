@@ -25,9 +25,11 @@ export function dayShadeMarkArea(time: string[], palette: ChartPalette, axis: "x
     const endIdx = b + 1 < bounds.length ? bounds[b + 1] : time.length;
     const end = time[Math.min(endIdx, time.length - 1)];
     // The date digits are already location-local, so getDay() is the local weekday.
+    // Shade is tied to the WEEKDAY (not the day's position in the window), so a given
+    // calendar day always has the same background — it doesn't flip while panning.
     const dow = new Date(start).getDay();
     const weekend = dow === 0 || dow === 6;
-    const color = weekend ? palette.weekendShade : b % 2 === 0 ? palette.dayShade : null;
+    const color = weekend ? palette.weekendShade : dow % 2 === 1 ? palette.dayShade : null;
     if (!color) continue;
     const from: Record<string, unknown> = { itemStyle: { color } };
     const to: Record<string, unknown> = {};

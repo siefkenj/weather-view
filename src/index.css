@@ -606,7 +606,7 @@ button {
 }
 .scroll-edge {
   flex: 0 0 auto;
-  width: 34px;
+  width: 20px;
   align-self: stretch;
   display: flex;
   align-items: center;
@@ -653,15 +653,25 @@ button {
   position: absolute;
   left: 0;
   right: 0;
-  pointer-events: none;
+  /* The band captures the pointer so the chart's axis tooltip doesn't flicker on
+     and off as the cursor crosses the day icons (it stays over the empty headroom,
+     where there's no data to read anyway). */
+  pointer-events: auto;
 }
 .forecast-header {
   position: relative;
   height: 100%;
 }
 .forecast-header__row {
-  position: relative;
-  height: 100%;
+  position: absolute;
+  left: 56px;
+  right: 56px;
+  top: 0;
+  bottom: 0;
+  /* Clip the tiles to the plot region so they never overlap the y-axis labels in
+     the gutters — the axis reads on top of the day icons. */
+  overflow-x: clip;
+  overflow-y: visible;
 }
 /* Tiles are absolutely positioned at their day column (left/width set inline) and
    centred on it, so they slide with the chart when it's panned fractionally. */
