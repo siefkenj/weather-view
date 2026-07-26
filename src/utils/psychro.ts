@@ -11,6 +11,8 @@ const CP_AIR = 1.006; // kJ/(kg·K) — specific heat of dry air
 const CP_VAPOR = 1.86; // kJ/(kg·K) — specific heat of water vapor
 const L0 = 2501; // kJ/kg — latent heat of vaporization at 0 °C
 const MW_RATIO = 0.62198; // molar mass ratio, water vapor / dry air
+const R_DRY = 287.042; // J/(kg·K) — specific gas constant for dry air
+const ZERO_C_K = 273.15; // 0 °C in kelvin
 
 /** Saturation vapor pressure over water, in hPa (Magnus/Tetens form). T in °C. */
 export function saturationVaporPressure(tC: number): number {
@@ -34,6 +36,33 @@ export function moistAirEnthalpy(tC: number, rhPct: number, pressureHpa: number)
   const w = humidityRatio(tC, rhPct, pressureHpa);
   if (!Number.isFinite(w)) return NaN;
   return CP_AIR * tC + w * (L0 + CP_VAPOR * tC);
+}
+
+/**
+ * Density of the DRY-air component, kg per m³ of moist air. From the ideal gas
+ * law applied to the dry-air partial pressure (total pressure minus the vapor
+ * pressure) — this is the mass of dry air that one m³ of moist air contains, so
+ * it's the correct factor for turning a per-kg-dry-air quantity into a per-m³ one.
+ */
+export function dryAirDensity(tC: number, rhPct: number, pressureHpa: number): number {
+  const pwHpa = (rhPct / 100) * saturationVaporPressure(tC);
+  const pDryPa = (pressureHpa - pwHpa) * 100; // dry-air partial pressure, hPa → Pa
+  const tK = tC + ZERO_C_K;
+  if (!(pDryPa > 0) || !(tK > 0)) return NaN;
+  return pDryPa / (R_DRY * tK);
+}
+
+/**
+ * Specific enthalpy of moist air per CUBIC METER, kJ/m³ — energy content of a
+ * volume of air. This is the per-kg-dry-air enthalpy scaled by the dry-air
+ * density, so both the sensible (temperature) and latent (humidity) heat carry
+ * through. Values are typically ~30–110 kJ/m³ in habitable conditions.
+ */
+export function moistAirEnthalpyPerVolume(tC: number, rhPct: number, pressureHpa: number): number {
+  const hPerKg = moistAirEnthalpy(tC, rhPct, pressureHpa); // kJ / kg dry air
+  const rho = dryAirDensity(tC, rhPct, pressureHpa); // kg dry air / m³
+  if (!Number.isFinite(hPerKg) || !Number.isFinite(rho)) return NaN;
+  return hPerKg * rho; // (kJ/kg) · (kg/m³) = kJ/m³
 }
 
 /**

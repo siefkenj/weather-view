@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  dryAirDensity,
   humidityRatio,
   moistAirEnthalpy,
+  moistAirEnthalpyPerVolume,
   saturationVaporPressure,
   wetBulbTemperature,
 } from "./psychro";
@@ -35,6 +37,26 @@ describe("moistAirEnthalpy", () => {
   });
   it("rises further with humidity — 90% RH exceeds 50% RH", () => {
     expect(moistAirEnthalpy(30, 90, P)).toBeGreaterThan(moistAirEnthalpy(30, 50, P));
+  });
+});
+
+describe("dryAirDensity", () => {
+  it("is ~1.14 kg/m³ for warm moist air (30 °C / 50% RH)", () => {
+    expect(dryAirDensity(30, 50, P)).toBeCloseTo(1.14, 1);
+  });
+  it("is denser when cold — 0 °C exceeds 30 °C", () => {
+    expect(dryAirDensity(0, 50, P)).toBeGreaterThan(dryAirDensity(30, 50, P));
+  });
+});
+
+describe("moistAirEnthalpyPerVolume", () => {
+  it("equals per-kg enthalpy times dry-air density (~73 kJ/m³ at 30 °C / 50% RH)", () => {
+    const expected = moistAirEnthalpy(30, 50, P) * dryAirDensity(30, 50, P);
+    expect(moistAirEnthalpyPerVolume(30, 50, P)).toBeCloseTo(expected, 6);
+    expect(moistAirEnthalpyPerVolume(30, 50, P)).toBeCloseTo(73, 0);
+  });
+  it("rises with humidity — 90% RH exceeds 50% RH", () => {
+    expect(moistAirEnthalpyPerVolume(30, 90, P)).toBeGreaterThan(moistAirEnthalpyPerVolume(30, 50, P));
   });
 });
 

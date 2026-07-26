@@ -9,7 +9,7 @@ import type { Bands } from "../api/ensemble";
 import type { ChartPalette } from "../theme/palette";
 import type { PanelKey, SeriesKey } from "../hooks/useUrlState";
 import { cToDisplay, PRECIP_UNIT, tempUnit, type Units } from "../utils/units";
-import { moistAirEnthalpy, wetBulbTemperature } from "../utils/psychro";
+import { moistAirEnthalpyPerVolume, wetBulbTemperature } from "../utils/psychro";
 import { formatClock, formatDayShort, formatTime, parseLocal } from "../utils/format";
 import { dayShadeMarkArea } from "./meteogramShading";
 import { computeHorizontalLayout, TEMP_HEADROOM } from "./meteogramLayout";
@@ -188,13 +188,13 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
         }
       : {}),
   });
-  // Enthalpy lives on its own right-hand axis (kJ/kg): a different unit from the
+  // Enthalpy lives on its own right-hand axis (kJ/m³): a different unit from the
   // °-scale left axis, auto-scaled so the curve fills the panel to roughly the
   // same height as temperature — same pattern as pressure in the atmo panel.
   if (series.includes("enthalpy")) {
     pushY("enthalpy", {
       ...yBase(gridIndex.temp),
-      name: "kJ/kg",
+      name: "kJ/m³",
       position: "right",
       scale: true,
       splitLine: { show: false },
@@ -360,7 +360,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     pushLine("Wet bulb", wb, gridIndex.temp, yIdx.temp, 1.6);
   }
   if (series.includes("enthalpy") && !isHidden("Enthalpy")) {
-    const en = hourly.temperature.map((t, i) => round1(moistAirEnthalpy(t, hourly.humidity[i], hourly.pressure[i])));
+    const en = hourly.temperature.map((t, i) => round1(moistAirEnthalpyPerVolume(t, hourly.humidity[i], hourly.pressure[i])));
     pushLine("Enthalpy", en, gridIndex.temp, yIdx.enthalpy, 1.6);
   }
 
@@ -469,7 +469,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     "Feels like": tempUnit(units),
     "Dew point": tempUnit(units),
     "Wet bulb": tempUnit(units),
-    Enthalpy: " kJ/kg",
+    Enthalpy: " kJ/m³",
     Precipitation: ` ${PRECIP_UNIT}/h`,
     "Chance of precip": "%",
     "Cloud cover": "%",
@@ -596,7 +596,7 @@ export function meteogramLegend(input: {
     { name: "Feels like", color: colors["Feels like"], kind: "series", seriesKey: "feels", help: "Feels-like (apparent) temperature — folds in humidity, wind, and sun. Dashed, and shown only where it differs from the temperature by more than 2 °C." },
     { name: "Dew point", color: colors["Dew point"], kind: "series", seriesKey: "dew", help: "Dew point — the temperature at which dew forms; higher feels muggier." },
     { name: "Wet bulb", color: colors["Wet bulb"], kind: "series", seriesKey: "wetbulb", help: "Wet-bulb temperature — the coolest a surface can get by evaporation. Sustained values near 35 °C are life-threatening even in the shade." },
-    { name: "Enthalpy", color: colors.Enthalpy, kind: "series", seriesKey: "enthalpy", help: "Enthalpy — total heat energy of the moist air (kJ/kg), combining temperature and humidity." },
+    { name: "Enthalpy", color: colors.Enthalpy, kind: "series", seriesKey: "enthalpy", help: "Enthalpy — total heat energy per cubic meter of moist air (kJ/m³), combining temperature and humidity." },
   ];
   if (panels.includes("precip")) {
     out.push({ name: "Precipitation", color: colors.Precipitation, kind: "line", help: "Hourly precipitation amount (rain / melted snow), in mm." });

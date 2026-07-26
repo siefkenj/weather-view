@@ -31,6 +31,12 @@ export interface DashboardState {
    * is deliberately NOT persisted to the URL, so it never appears in parse/serialize.
    */
   viewStart: string | null;
+  /**
+   * Radar map zoom level, or `null` to fit the default ~80 km region. Like
+   * `viewStart`, this is session-only state kept in Redux but deliberately NOT
+   * persisted to the URL, so it never appears in parse/serialize.
+   */
+  zoom: number | null;
   series: SeriesKey[];
   panels: PanelKey[];
   ci: boolean;
@@ -41,6 +47,7 @@ export interface DashboardState {
 export const DEFAULTS: DashboardState = {
   days: DEFAULT_WINDOW_DAYS,
   viewStart: null,
+  zoom: 2,
   series: DEFAULT_SERIES,
   panels: ALL_PANELS,
   ci: false,
@@ -83,6 +90,7 @@ export function parseState(params: URLSearchParams): DashboardState {
   return {
     days,
     viewStart: null, // session-only pan state; never read from the URL
+    zoom: null, // session-only map zoom; never read from the URL
     series,
     panels,
     ci: params.get("ci") === "1",

@@ -3,6 +3,7 @@ import {
   viewReducer,
   setDays,
   setView,
+  setZoom,
   toggleSeries,
   togglePanel,
 } from "./viewSlice";
@@ -27,6 +28,12 @@ describe("viewSlice", () => {
     expect(s.panels).not.toContain("air");
   });
 
+  it("stores the map zoom in the slice but keeps it out of the URL", () => {
+    const s = viewReducer(DEFAULTS, setZoom(9.25));
+    expect(s.zoom).toBe(9.25);
+    expect(serializeState(s).toString()).toBe(""); // session-only; never serialized
+  });
+
   it("merges a partial patch via setView (used by URL→store + update)", () => {
     const s = viewReducer(DEFAULTS, setView({ units: "imperial", ci: true }));
     expect(s.units).toBe("imperial");
@@ -40,6 +47,7 @@ describe("urlState round-trip", () => {
     const state = {
       days: 5,
       viewStart: null, // session-only; not serialized, so it round-trips as null
+      zoom: null, // session-only; not serialized, so it round-trips as null
       series: ["temp" as const],
       panels: ["precip" as const, "air" as const],
       ci: true,

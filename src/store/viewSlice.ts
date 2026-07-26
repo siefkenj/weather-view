@@ -40,6 +40,9 @@ const viewSlice = createSlice({
     setViewStart(state, action: PayloadAction<string | null>) {
       state.viewStart = action.payload;
     },
+    setZoom(state, action: PayloadAction<number | null>) {
+      state.zoom = action.payload;
+    },
     setCi(state, action: PayloadAction<boolean>) {
       state.ci = action.payload;
     },
@@ -62,6 +65,7 @@ export const {
   setView,
   setDays,
   setViewStart,
+  setZoom,
   setCi,
   setUnits,
   setExtraModels,

@@ -35,6 +35,7 @@ import {
   fetchGeocode,
   fetchMinutely,
 } from "../api/openMeteo";
+import { fetchRadarFrames, type RadarIndex } from "../api/rainviewer";
 import type {
   AirQualityResponse,
   EnsembleResponse,
@@ -183,6 +184,12 @@ export const openMeteoApi = createApi({
       queryFn: (name, api) => run((signal) => fetchGeocode(name, signal), api.signal),
       keepUnusedDataFor: 24 * 60 * 60, // geocoding rarely changes
     }),
+    // Weather radar frame index (RainViewer). Global — one entry, not per-location:
+    // the same frames cover the whole map. Polling is set at the call site.
+    radarFrames: build.query<RadarIndex, void>({
+      queryFn: (_arg, api) => run((signal) => fetchRadarFrames(signal), api.signal),
+      keepUnusedDataFor: 5 * 60,
+    }),
   }),
 });
 
@@ -192,4 +199,5 @@ export const {
   useEnsembleQuery,
   useAirQualityQuery,
   useGeocodeQuery,
+  useRadarFramesQuery,
 } = openMeteoApi;

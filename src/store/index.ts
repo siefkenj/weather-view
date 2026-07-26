@@ -6,12 +6,14 @@ import { useDispatch, useSelector } from "react-redux";
 import { openMeteoApi } from "./openMeteoApi";
 import { viewReducer } from "./viewSlice";
 import { themeReducer } from "./themeSlice";
+import { readoutReducer } from "./readoutSlice";
 
 export const store = configureStore({
   reducer: {
     [openMeteoApi.reducerPath]: openMeteoApi.reducer,
     view: viewReducer,
     theme: themeReducer,
+    readout: readoutReducer,
   },
   middleware: (getDefault) => getDefault().concat(openMeteoApi.middleware),
 });

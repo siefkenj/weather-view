@@ -1,8 +1,11 @@
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { describeWeather } from "../api/weatherCode";
 import { WeatherIcon } from "./WeatherIcon";
-import { formatFullDate, formatMonthDay, formatTime, formatWeekday, parseLocal } from "../utils/format";
+import { formatFullDate, formatMonthDay, formatWeekday, parseLocal } from "../utils/format";
 import { formatPrecip, formatTemp, type Units } from "../utils/units";
+import { aqhiCategory, formatAqhi } from "../utils/aqhi";
+import { useAppDispatch, useAppSelector } from "../store";
+import { closeDay, openDay } from "../store/readoutSlice";
 import type { DailySummary } from "../utils/series";
 
 interface Props {
@@ -14,6 +17,8 @@ interface Props {
    *  when the window is panned by a fraction of a day. */
   windowStart: string;
   windowEnd: string;
+  /** Peak AQHI per day (YYYY-MM-DD → value) for the day popup; absent days show "–". */
+  dailyAqhi?: Map<string, number>;
 }
 
 const CARD_HALF = 140; // half the popover width, for edge clamping
@@ -25,8 +30,11 @@ const DAY_MS = 86_400_000;
  * The 56px side padding matches the ECharts grid inset so days line up with the
  * chart columns below.
  */
-export function ForecastHeader({ summaries, units, todayKey, windowStart, windowEnd }: Props) {
-  const [hover, setHover] = useState<{ i: number; left: number } | null>(null);
+export function ForecastHeader({ summaries, units, todayKey, windowStart, windowEnd, dailyAqhi }: Props) {
+  // The open readout lives in the store so it's mutually exclusive with the chart's
+  // hover tooltip — opening one closes the other (see store/readoutSlice.ts).
+  const readout = useAppSelector((s) => s.readout);
+  const dispatch = useAppDispatch();
   const rowRef = useRef<HTMLDivElement>(null);
 
   // Map a day's noon onto the plot in the same linear way the chart's category axis
@@ -47,23 +55,25 @@ export function ForecastHeader({ summaries, units, todayKey, windowStart, window
     };
   };
 
-  function open(i: number, target: HTMLElement) {
+  function open(date: string, target: HTMLElement) {
     const row = rowRef.current;
     if (!row) return;
     const cell = target.getBoundingClientRect();
     const rowRect = row.getBoundingClientRect();
     const center = cell.left - rowRect.left + cell.width / 2;
     const left = Math.max(CARD_HALF + 4, Math.min(center, rowRect.width - CARD_HALF - 4));
-    setHover({ i, left });
+    dispatch(openDay({ date, left }));
   }
 
-  const active = hover ? summaries[hover.i] : null;
+  const active =
+    readout.kind === "day" ? summaries.find((s) => s.date === readout.date) ?? null : null;
   const activeWx = active ? describeWeather(active.code) : null;
+  const activeAqhi = active ? dailyAqhi?.get(active.date) : undefined;
 
   return (
     <div className="forecast-header" ref={rowRef}>
       <div className="forecast-header__row">
-        {summaries.map((d, i) => {
+        {summaries.map((d) => {
           const wx = describeWeather(d.code);
           const isToday = todayKey === d.date;
           return (
@@ -73,13 +83,13 @@ export function ForecastHeader({ summaries, units, todayKey, windowStart, window
               className={
                 "fh-cell" +
                 (isToday ? " fh-cell--today" : "") +
-                (hover?.i === i ? " fh-cell--active" : "")
+                (readout.kind === "day" && readout.date === d.date ? " fh-cell--active" : "")
               }
               style={cellStyle(d.date)}
-              onMouseEnter={(e) => open(i, e.currentTarget)}
-              onMouseLeave={() => setHover(null)}
-              onFocus={(e) => open(i, e.currentTarget)}
-              onBlur={() => setHover(null)}
+              onMouseEnter={(e) => open(d.date, e.currentTarget)}
+              onMouseLeave={() => dispatch(closeDay())}
+              onFocus={(e) => open(d.date, e.currentTarget)}
+              onBlur={() => dispatch(closeDay())}
               aria-label={`${formatFullDate(d.date)}: ${wx.label}`}
             >
               <span className="fh-date">
@@ -98,8 +108,8 @@ export function ForecastHeader({ summaries, units, todayKey, windowStart, window
         })}
       </div>
 
-      {active && activeWx ? (
-        <div className="forecast-card" style={{ left: hover!.left }} role="tooltip">
+      {readout.kind === "day" && active && activeWx ? (
+        <div className="forecast-card" style={{ left: readout.left }} role="tooltip">
           <div className="forecast-card__head">
             <WeatherIcon kind={activeWx.icon} size={46} title={activeWx.label} />
             <div>
@@ -112,10 +122,12 @@ export function ForecastHeader({ summaries, units, todayKey, windowStart, window
             <Fact k="Low" v={formatTemp(active.tempMin, units)} />
             <Fact k="Chance" v={`${Math.round(active.precipProbMax ?? 0)}%`} />
             <Fact k="Precip" v={formatPrecip(active.precipSum)} />
-            <Fact k="Rain hrs" v={`${Math.round(active.precipHours ?? 0)} h`} />
             <Fact k="UV max" v={String(Math.round(active.uvMax ?? 0))} />
-            <Fact k="Sunrise" v={formatTime(active.sunrise)} />
-            <Fact k="Sunset" v={formatTime(active.sunset)} />
+            <Fact
+              k="Air quality"
+              v={formatAqhi(activeAqhi)}
+              color={activeAqhi != null ? aqhiCategory(activeAqhi).color : undefined}
+            />
           </div>
         </div>
       ) : null}
@@ -123,11 +135,13 @@ export function ForecastHeader({ summaries, units, todayKey, windowStart, window
   );
 }
 
-function Fact({ k, v }: { k: string; v: string }) {
+function Fact({ k, v, color }: { k: string; v: string; color?: string }) {
   return (
     <div className="forecast-card__fact">
       <span className="fact-key">{k}</span>
-      <span className="fact-val">{v}</span>
+      <span className="fact-val" style={color ? { color } : undefined}>
+        {v}
+      </span>
     </div>
   );
 }

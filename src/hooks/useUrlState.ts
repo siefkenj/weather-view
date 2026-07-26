@@ -12,6 +12,7 @@ import {
   setUnits,
   setView,
   setViewStart,
+  setZoom,
   togglePanel,
   toggleSeries,
 } from "../store/viewSlice";
@@ -39,6 +40,7 @@ export function useDashboardState() {
     togglePanel: (key: PanelKey) => dispatch(togglePanel(key)),
     setDays: (days: number) => dispatch(setDays(days)),
     setViewStart: (viewStart: string | null) => dispatch(setViewStart(viewStart)),
+    setZoom: (zoom: number | null) => dispatch(setZoom(zoom)),
     setCi: (ci: boolean) => dispatch(setCi(ci)),
     setUnits: (units: Units) => dispatch(setUnits(units)),
     setExtraModels: (extraModels: string[]) => dispatch(setExtraModels(extraModels)),

@@ -5,6 +5,8 @@ import { computeHorizontalLayout, tempTopEmptyFraction } from "./meteogramLayout
 import { useECharts } from "../hooks/useECharts";
 import { useTheme } from "../hooks/useTheme";
 import { chartPalette } from "../theme/palette";
+import { useAppDispatch } from "../store";
+import { closeHover, openHover } from "../store/readoutSlice";
 import type { Bands } from "../api/ensemble";
 import type { PanelKey, SeriesKey } from "../hooks/useUrlState";
 import type { Units } from "../utils/units";
@@ -29,9 +31,16 @@ interface Props {
   hidden?: string[];
   /** AQHI per hour (aligned to hourly.time) for the integrated air-quality panel. */
   aqhi?: (number | null)[];
+  /** Peak AQHI per day (YYYY-MM-DD → value) for the day popups. */
+  dailyAqhi?: Map<string, number>;
 }
 
 const HOVER_BOOST = 1.8;
+// The day tiles are taller than the headroom band they sit in, so they overhang it
+// slightly. The band captures the pointer to keep the chart's axis tooltip from
+// showing in the icon row; extend that capture zone by this many px above and below
+// so it fully contains the tiles (no canvas leaks through the gaps between them).
+const DATE_BAND_PAD = 16;
 
 export function Meteogram({
   hourly,
@@ -47,8 +56,10 @@ export function Meteogram({
   todayKey,
   hidden,
   aqhi,
+  dailyAqhi,
 }: Props) {
   const { theme } = useTheme();
+  const dispatch = useAppDispatch();
   const integrated = !!daily && daily.length > 0;
   const palette = chartPalette(theme);
   // Drop the air panel when there's no AQHI data for this window.
@@ -128,6 +139,31 @@ export function Meteogram({
     };
   }, [chartRef, applyHover]);
 
+  // Tie the axis tooltip ("hover details") to the shared readout so it and the day
+  // popover can never be open at once. The tooltip only appears when the pointer is
+  // over the plot (the day tiles sit on an overlay that captures the pointer, so it
+  // gets no events there) — so `updateAxisPointer` with a real value means "hover
+  // details are showing" → open the hover readout, which closes any day popover.
+  // Leaving the chart (`globalout`) closes it again.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const onAxis = (e: { axesInfo?: { value?: unknown }[] }) => {
+      if (Array.isArray(e?.axesInfo) && e.axesInfo.some((a) => a && a.value != null)) {
+        dispatch(openHover());
+      }
+    };
+    const onOut = () => {
+      dispatch(closeHover());
+    };
+    chart.on("updateAxisPointer", onAxis as (p: unknown) => void);
+    chart.on("globalout", onOut);
+    return () => {
+      chart.off("updateAxisPointer", onAxis as (p: unknown) => void);
+      chart.off("globalout", onOut);
+    };
+  }, [chartRef, dispatch]);
+
   const resolvedHeight = integrated ? 560 : height;
 
   // Where the on-graph tiles sit: the empty band at the top of the temp panel.
@@ -146,13 +182,20 @@ export function Meteogram({
         aria-label="Weather meteogram"
       />
       {integrated && band && daily ? (
-        <div className="graph-dates" style={{ top: `${band.top}%`, height: `${band.height}%` }}>
+        <div
+          className="graph-dates"
+          style={{
+            top: `calc(${band.top}% - ${DATE_BAND_PAD}px)`,
+            height: `calc(${band.height}% + ${2 * DATE_BAND_PAD}px)`,
+          }}
+        >
           <ForecastHeader
             summaries={daily}
             units={units}
             todayKey={todayKey}
             windowStart={hourly.time[0]}
             windowEnd={hourly.time[hourly.time.length - 1]}
+            dailyAqhi={dailyAqhi}
           />
         </div>
       ) : null}

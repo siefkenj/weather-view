@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { CurrentConditions } from "./CurrentConditions";
 import { Meteogram } from "./Meteogram";
 import { meteogramLegend } from "./meteogramOption";
@@ -31,6 +31,9 @@ import type { Place } from "../api/types";
 // At/below this window width, the meteogram is refined onto the 15-minute grid
 // (native near-term data covers ~2 days; finer detail is invisible beyond that).
 const REFINE_MAX_DAYS = 2;
+
+// The radar map (Leaflet) is code-split so it stays off the main chart bundle.
+const RadarView = lazy(() => import("./RadarView"));
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
@@ -94,20 +97,29 @@ export function Dashboard({ place }: { place: Place }) {
   const ciEnabled = state.ci;
   const airEnabled = state.panels.includes("air");
 
-  // What the first (fast) load must cover: the visible window, expressed relative to
-  // today (estimated from the location's zone before any data has arrived). On a
-  // fresh load that's just today → today + days; a restored/scrolled URL widens it.
-  const initial = useMemo(() => {
+  // What the first (fast) load must cover: the initially-visible window, relative to
+  // today (estimated from the location's zone before any data has arrived) — just
+  // today → today + days on a fresh load.
+  //
+  // Computed ONCE at mount (Dashboard is remounted per location, so "once" is per
+  // location) and then frozen. This is deliberate: once stage 1 lands, `loadFull`
+  // expands to the full range, so any later pan (`viewStart`) or day-count change is
+  // served from that superset. Recomputing it mid-load — as it did off the
+  // width-clamped `windowDays`, and would off `viewStart`/`days` — fires a *second*
+  // stage-1 request whose narrower range races the stage-2 full-range refetch into the
+  // same (location-keyed) cache entry and drops it; that's what left narrow screens,
+  // which re-measure `windowDays` just after first paint, unable to scroll into the past.
+  const [initial] = useState(() => {
     const today = todayInZone(place.timezone);
     const startDay = state.viewStart ? dayKey(state.viewStart) : today;
-    const endDay = addDays(startDay, windowDays);
+    const endDay = addDays(startDay, state.days);
     const fwd = Math.round((parseLocal(endDay).getTime() - parseLocal(today).getTime()) / DAY_MS);
     const back = Math.round((parseLocal(today).getTime() - parseLocal(startDay).getTime()) / DAY_MS);
     return {
-      initialForecastDays: clamp(fwd + 1, windowDays, MAX_FORECAST_DAYS),
+      initialForecastDays: clamp(fwd + 1, state.days, MAX_FORECAST_DAYS),
       initialPastDays: clamp(back + 1, 0, FULL_PAST_DAYS),
     };
-  }, [place.timezone, state.viewStart, windowDays]);
+  });
 
   // All weather for this location, grouped as sub-objects under its lon,lat key.
   // Each field is an independent RTK Query result (own data/loading/error); the
@@ -183,6 +195,22 @@ export function Dashboard({ place }: { place: Place }) {
     const i = findNowIndex(airQ.data.hourly.time, forecast.current.time);
     return i >= 0 ? aqhi[i] : null;
   }, [aqhi, airQ.data, forecast]);
+
+  // Peak AQHI per calendar day (the index is reported as a daily max) for the day
+  // popups. Empty when air quality isn't loaded or is past its ~7-day horizon.
+  const dailyAqhi = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!aqhi || !airQ.data) return map;
+    const t = airQ.data.hourly.time;
+    for (let i = 0; i < t.length; i++) {
+      const v = aqhi[i];
+      if (v == null || !Number.isFinite(v)) continue;
+      const day = t[i].slice(0, 10);
+      const prev = map.get(day);
+      if (prev == null || v > prev) map.set(day, v);
+    }
+    return map;
+  }, [aqhi, airQ.data]);
 
   // The current weather day (2am → 2am) that contains "now", for the today-panel
   // graph. Before 2am the day belongs to the previous calendar date. Uses the
@@ -435,6 +463,7 @@ export function Dashboard({ place }: { place: Place }) {
                   todayKey={todayKey}
                   hidden={[...hidden]}
                   aqhi={aqhiWindow}
+                  dailyAqhi={dailyAqhi}
                 />
               ) : (
                 emptyState
@@ -499,6 +528,10 @@ export function Dashboard({ place }: { place: Place }) {
           <div className="state state--loading">Loading air quality…</div>
         ) : null
       ) : null}
+
+      <Suspense fallback={<div className="state state--loading">Loading radar…</div>}>
+        <RadarView place={place} />
+      </Suspense>
     </div>
   );
 }

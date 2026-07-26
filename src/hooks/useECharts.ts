@@ -27,9 +27,9 @@ export function useECharts(option: EChartsOption | null) {
     };
   }, []);
 
-  // The pan gesture flushSync-swaps the window before releasing the transform;
-  // flushSync also flushes this passive effect, so the destination render is in
-  // place synchronously and the hand-off is seamless.
+  // Re-apply the option whenever it changes. Panning re-renders the window live (the
+  // Dashboard overrides `viewStart` while dragging), so this just re-runs setOption as
+  // the sliced data changes — there's no transform/flushSync hand-off to coordinate.
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;

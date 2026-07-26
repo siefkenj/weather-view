@@ -69,7 +69,7 @@ describe("buildMeteogramOption", () => {
     expect(seriesNames(opt)).toContain("_tempBand");
   });
 
-  it("adds wet-bulb and enthalpy series (with a kJ/kg right axis) when selected", () => {
+  it("adds wet-bulb and enthalpy series (with a kJ/m³ right axis) when selected", () => {
     const opt = buildMeteogramOption({
       ...base,
       series: ["temp", "wetbulb", "enthalpy"],
@@ -78,15 +78,15 @@ describe("buildMeteogramOption", () => {
     const names = seriesNames(opt);
     expect(names).toContain("Wet bulb");
     expect(names).toContain("Enthalpy");
-    // Enthalpy gets its own value axis named kJ/kg.
+    // Enthalpy gets its own value axis named kJ/m³.
     const axisNames = (opt.yAxis as { name?: string }[]).map((a) => a.name);
-    expect(axisNames).toContain("kJ/kg");
+    expect(axisNames).toContain("kJ/m³");
   });
 
   it("computes plausible enthalpy values from temperature/humidity/pressure", () => {
     const opt = buildMeteogramOption({ ...base, series: ["enthalpy"], panels: [] });
     const enth = (opt.series as { name: string; data: number[] }[]).find((s) => s.name === "Enthalpy");
-    // 18 °C ± 6 at 70% RH, 1012 hPa lands in the ~35–70 kJ/kg range of moist air.
+    // 18 °C ± 6 at 70% RH, 1012 hPa lands in the ~33–67 kJ/m³ range of moist air.
     expect(Math.min(...enth!.data)).toBeGreaterThan(25);
     expect(Math.max(...enth!.data)).toBeLessThan(90);
   });

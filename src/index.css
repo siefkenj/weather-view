@@ -927,6 +927,32 @@ button {
   }
 }
 
+@media (max-width: 640px) {
+  /* On phones the info panels run edge to edge — no page gutters (all four sides),
+     side borders, rounded corners, or gaps between panels — so the chart and cards
+     use the full screen. */
+  .app__main {
+    padding: 0;
+  }
+  .panel {
+    margin-top: 0;
+    border-radius: 0;
+    border-inline: 0;
+  }
+  .meteogram-panel {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  /* The current-conditions banner is a tall info block on phones; sticking it to
+     the top made it cover the chart (day icons + temperature panel) once scrolled,
+     so touches near the top hit the banner instead of panning. Let it scroll away.
+     Its negative top margin only existed to cancel the page's top padding (now 0). */
+  .current {
+    position: static;
+    margin-top: 0;
+  }
+}
+
 @media (max-width: 560px) {
   .controls {
     gap: 10px 12px;
@@ -943,4 +969,187 @@ button {
     font-size: 18px;
     border-radius: 7px;
   }
+}
+
+/* ---------- Radar panel ---------- */
+.radar-panel {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: stretch;
+}
+.radar-map-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.radar-map {
+  height: clamp(180px, 32vh, 380px);
+  width: 100%;
+  background: var(--surface-2);
+  z-index: 0;
+}
+/* Options live in the region beside the map (below it on phones). */
+.radar-options {
+  flex: 0 0 clamp(220px, 30%, 340px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+.radar-options__group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.radar-options__group:last-child {
+  margin-top: auto;
+}
+.radar-options__label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.radar-playback {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+@media (max-width: 640px) {
+  .radar-panel {
+    flex-direction: column;
+  }
+  .radar-options {
+    flex-basis: auto;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+}
+.radar-play {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 14px;
+}
+.radar-play:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.radar-play:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.radar-scrubber {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.radar-time {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+.radar-time__tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: var(--accent);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.radar-check {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.radar-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.aqi-legend {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+.aqi-legend__title {
+  display: block;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+.aqi-legend__scale {
+  display: flex;
+  gap: 0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.aqi-legend__swatch {
+  width: 26px;
+  height: 8px;
+}
+.aqi-legend__ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.radar-status {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 10px 14px;
+  font-size: 14px;
+}
+.radar-status--error {
+  color: var(--hi);
+}
+
+/* Leaflet controls tinted to match the app surfaces in both themes. */
+.leaflet-bar a,
+.leaflet-control-attribution {
+  background: var(--surface);
+  color: var(--text-dim);
+}
+.leaflet-bar a {
+  color: var(--text);
+  border-color: var(--border);
+}
+.leaflet-control-attribution a {
+  color: var(--accent);
 }
