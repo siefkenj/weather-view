@@ -3,6 +3,7 @@ import { CurrentConditions } from "./CurrentConditions";
 import { Meteogram } from "./Meteogram";
 import { meteogramLegend } from "./meteogramOption";
 import { AirQualityPanel } from "./AirQualityPanel";
+import { AirPanelSkeleton, DashboardSkeleton, RadarSkeleton } from "./Skeletons";
 import { useDashboardState } from "../hooks/useUrlState";
 import { useTheme } from "../hooks/useTheme";
 import { chartPalette } from "../theme/palette";
@@ -266,7 +267,7 @@ export function Dashboard({ place }: { place: Place }) {
   });
 
   if (forecastQ.isLoading && !forecast) {
-    return <div className="state state--loading">Loading forecast for {place.name}…</div>;
+    return <DashboardSkeleton />;
   }
   if (forecastQ.isError || !forecast) {
     return (
@@ -525,11 +526,11 @@ export function Dashboard({ place }: { place: Place }) {
             nowIso={nowInWindow ? forecast.current.time : `${startKey}T12:00`}
           />
         ) : airQ.isLoading ? (
-          <div className="state state--loading">Loading air quality…</div>
+          <AirPanelSkeleton />
         ) : null
       ) : null}
 
-      <Suspense fallback={<div className="state state--loading">Loading radar…</div>}>
+      <Suspense fallback={<RadarSkeleton />}>
         <RadarView place={place} />
       </Suspense>
     </div>

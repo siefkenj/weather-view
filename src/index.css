@@ -12,6 +12,10 @@
   --hi: #e03131;
   --lo: #4dabf7;
   --feels: #c2255c;
+  /* Scrubber track: plain where there's no radar, tinted where radar is available.
+     Both derive from theme vars, so they adapt to light/dark automatically. */
+  --radar-track: var(--border);
+  --radar-avail: color-mix(in srgb, var(--accent) 50%, var(--surface));
 
   color-scheme: light;
 }
@@ -900,6 +904,71 @@ button {
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
+
+/* ---------- Loading skeletons ---------- */
+.skeleton {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: var(--border);
+  border-radius: 8px;
+  flex: none;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  animation: sk-shimmer 1.3s ease-in-out infinite;
+}
+:root[data-theme="dark"] .skeleton::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.09), transparent);
+}
+@keyframes sk-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+}
+.sk-mt {
+  margin-top: 10px;
+}
+.sk-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.sk-radar-map {
+  height: clamp(180px, 32vh, 380px);
+  width: 100%;
+  border-radius: 0;
+}
+.current--skeleton .current__main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sk-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .sk-tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sk-hide-narrow {
+    display: none;
+  }
+}
 .state--error {
   color: var(--hi);
 }
@@ -1046,9 +1115,98 @@ button {
   opacity: 0.5;
   cursor: default;
 }
+/* Timeline: a labelled background strip around the slider. The band that actually
+   has radar frames (var(--radar-start) → var(--radar-end)) is tinted and labelled
+   "Radar"; the plain areas (labelled Past / Forecast) are overlay-only. The slider
+   is overlaid on top with a transparent track so the strip reads as its track. */
+.radar-timeline {
+  position: relative;
+  padding-top: 15px; /* room for the label row */
+}
+.radar-timeline__labels {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 13px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.rt-lab {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.rt-lab--past {
+  left: calc(var(--radar-start, 0%) / 2);
+}
+.rt-lab--radar {
+  left: calc((var(--radar-start, 0%) + var(--radar-end, 0%)) / 2);
+  color: var(--accent);
+}
+.rt-lab--forecast {
+  left: calc((var(--radar-end, 100%) + 100%) / 2);
+}
+.radar-timeline__bar {
+  position: relative;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--radar-track);
+  overflow: hidden;
+}
+.radar-timeline__radar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--radar-start, 0%);
+  width: calc(var(--radar-end, 0%) - var(--radar-start, 0%));
+  background: var(--radar-avail);
+}
 .radar-scrubber {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
   width: 100%;
-  accent-color: var(--accent);
+  height: 20px;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.radar-scrubber:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.radar-scrubber::-webkit-slider-runnable-track {
+  height: 20px;
+  background: transparent;
+}
+.radar-scrubber::-moz-range-track {
+  height: 20px;
+  background: transparent;
+}
+.radar-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.radar-scrubber::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 .radar-time {
   flex: 1;
@@ -1068,6 +1226,11 @@ button {
   background: var(--accent);
   padding: 1px 6px;
   border-radius: 999px;
+}
+.radar-time__tag--muted {
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
 }
 .radar-check {
   flex: none;

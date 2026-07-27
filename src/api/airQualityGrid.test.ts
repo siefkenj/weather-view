@@ -63,8 +63,18 @@ describe("sampleAqiGridAt", () => {
     ],
   };
 
-  it("picks the value at the hour nearest the timestamp", () => {
+  it("linearly interpolates between the two bracketing hours", () => {
+    // 1900 is 90% of the way from t=1000 to t=2000.
     expect(sampleAqiGridAt(grid, 1900)).toEqual([
+      { lat: 1, lon: 2, aqi: 10 + (60 - 10) * 0.9 }, // 55
+      { lat: 3, lon: 4, aqi: 20 + (70 - 20) * 0.9 }, // 65
+    ]);
+    // Exact midpoint of the first interval.
+    expect(sampleAqiGridAt(grid, 1500)[0].aqi).toBe(35);
+  });
+
+  it("returns the exact value at a grid time", () => {
+    expect(sampleAqiGridAt(grid, 2000)).toEqual([
       { lat: 1, lon: 2, aqi: 60 },
       { lat: 3, lon: 4, aqi: 70 },
     ]);
@@ -73,7 +83,7 @@ describe("sampleAqiGridAt", () => {
   it("clamps to the ends and passes through nulls", () => {
     expect(sampleAqiGridAt(grid, 9999)).toEqual([
       { lat: 1, lon: 2, aqi: 110 },
-      { lat: 3, lon: 4, aqi: null },
+      { lat: 3, lon: 4, aqi: null }, // both bracket values null at the end
     ]);
   });
 

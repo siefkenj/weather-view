@@ -72,7 +72,8 @@ export async function fetchAqiGrid(bounds: LatLonBounds, signal?: AbortSignal): 
   url.searchParams.set("timeformat", "unixtime");
   url.searchParams.set("timezone", "GMT");
   url.searchParams.set("past_days", "1");
-  url.searchParams.set("forecast_days", "1");
+  // 2 days of forecast so the timeline's +6 h window is covered even late in the day.
+  url.searchParams.set("forecast_days", "2");
   const res = await fetch(url.toString(), { signal });
   if (!res.ok) throw new Error(`Air-quality grid request failed: ${res.status} ${res.statusText}`);
   const body = (await res.json()) as AqLocation | AqLocation[];
@@ -86,19 +87,38 @@ export async function fetchAqiGrid(bounds: LatLonBounds, signal?: AbortSignal): 
   return { times, points };
 }
 
-/** Slice the grid at the hour nearest `unixSec` into a flat set of samples. */
+/**
+ * Sample the grid at `unixSec`, linearly interpolating each point between its two
+ * bracketing hourly values so the field changes smoothly as the timeline scrubs
+ * (rather than stepping once per hour). Clamps to the ends of the series; if one
+ * side of a bracket is null it falls back to the other.
+ */
 export function sampleAqiGridAt(grid: AqiGrid, unixSec: number): AqiSample[] {
   const { times, points } = grid;
-  let idx = 0;
-  let best = Infinity;
-  for (let k = 0; k < times.length; k++) {
-    const d = Math.abs(times[k] - unixSec);
-    if (d < best) {
-      best = d;
-      idx = k;
-    }
+  const n = times.length;
+  if (n === 0) return points.map((p) => ({ lat: p.lat, lon: p.lon, aqi: null }));
+
+  // Locate the interval times[lo] <= unixSec <= times[lo+1] (clamped to the ends).
+  let lo = 0;
+  if (unixSec <= times[0]) lo = 0;
+  else if (unixSec >= times[n - 1]) lo = n - 1;
+  else {
+    while (lo < n - 1 && times[lo + 1] <= unixSec) lo++;
   }
-  return points.map((p) => ({ lat: p.lat, lon: p.lon, aqi: times.length ? (p.values[idx] ?? null) : null }));
+  const hi = Math.min(lo + 1, n - 1);
+  const span = times[hi] - times[lo];
+  const frac = span > 0 ? (unixSec - times[lo]) / span : 0;
+
+  return points.map((p) => {
+    const a = p.values[lo];
+    const b = p.values[hi];
+    let aqi: number | null;
+    if (a == null && b == null) aqi = null;
+    else if (a == null) aqi = b ?? null;
+    else if (b == null) aqi = a;
+    else aqi = a + (b - a) * frac;
+    return { lat: p.lat, lon: p.lon, aqi };
+  });
 }
 
 // US EPA AQI colour breakpoints, interpolated smoothly by value so the field

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Navigate, useLocation, useParams } from "react-router-dom";
 import { Dashboard } from "./components/Dashboard";
+import { DashboardSkeleton } from "./components/Skeletons";
 import { useGeocodeQuery } from "./store/openMeteoApi";
 import { DEFAULT_PLACE, parseSlug, placeToSlug } from "./utils/place";
 import type { GeoLocation, Place } from "./api/types";
@@ -51,7 +52,7 @@ export function LocationPage() {
 
   // Need to geocode the label.
   if (resolveQ.isLoading) {
-    return <div className="state state--loading">Finding “{parsed.name}”…</div>;
+    return <DashboardSkeleton />;
   }
   const first = resolveQ.data?.results?.[0];
   if (!first) {
