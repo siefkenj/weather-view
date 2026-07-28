@@ -9,17 +9,17 @@
   --accent-weak: rgba(28, 126, 214, 0.12);
   --shadow: 0 1px 2px rgba(20, 30, 60, 0.06), 0 8px 24px rgba(20, 30, 60, 0.06);
   --radius: 14px;
-  --hi: #e03131;
-  --lo: #4dabf7;
-  --feels: #c2255c;
+  --hi: #da5739;
+  --lo: #387eb7;
+  --feels: #c27d25;
   /* Mini-graph day/night shading (see .temp-mini__sky). Endpoints are the old
      CIELAB night/day colours resolved to sRGB; --sunrise/--sunset are set per
      render by JS. Theme-independent, matching the previous SVG gradient. */
-  --sky-day: rgb(253, 251, 222);
-  --sky-night: rgb(42, 61, 101);
+  --sky-day: rgb(255, 251, 214);
+  --sky-night: rgb(55, 114, 166);
   /* Twilight band width on each side (as % of the graph): the night→day and
      day→night ramp, approximating the perceptual model's dusk/dawn knee. */
-  --sky-twilight: 5%;
+  --sky-twilight: 4%;
   /* Scrubber track: plain where there's no radar, tinted where radar is available.
      Both derive from theme vars, so they adapt to light/dark automatically. */
   --radar-track: var(--border);
