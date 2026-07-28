@@ -4,6 +4,8 @@
 // in µg/m³, so we convert to ppb first. Categories & wording per ECCC:
 // https://www.canada.ca/en/environment-climate-change/services/air-quality-health-index/about.html
 
+import { aqhiColorCss } from "./airColors";
+
 export interface AqhiCategory {
   /** Official ECCC category wording. */
   label: string;
@@ -14,28 +16,30 @@ export interface AqhiCategory {
   message: string;
 }
 
+// Colours come from the shared air-quality ramp (utils/airColors), keyed by a
+// representative value in each band, so every chart is coloured consistently.
 const LOW: AqhiCategory = {
   label: "Low health risk",
   short: "Low",
-  color: "#0a9cd6",
+  color: aqhiColorCss(2),
   message: "Ideal air quality for outdoor activities.",
 };
 const MODERATE: AqhiCategory = {
   label: "Moderate health risk",
   short: "Moderate",
-  color: "#f0a02c",
+  color: aqhiColorCss(5),
   message: "No need to modify activities unless you notice symptoms.",
 };
 const HIGH: AqhiCategory = {
   label: "High health risk",
   short: "High",
-  color: "#e5391f",
+  color: aqhiColorCss(8),
   message: "Consider reducing or rescheduling strenuous activities outdoors.",
 };
 const VERY_HIGH: AqhiCategory = {
   label: "Very high health risk",
   short: "Very high",
-  color: "#7a1204",
+  color: aqhiColorCss(11),
   message: "Reduce or reschedule strenuous activities outdoors.",
 };
 
@@ -65,7 +69,10 @@ export interface AqhiInput {
 
 /**
  * Per-hour AQHI aligned to the input hours (rounded, ≥1); NaN where inputs are
- * missing. Uses a trailing 3-hour average of each pollutant, per the ECCC method.
+ * missing. Smooths each pollutant with a CENTRED 3-hour average (i−1 … i+1).
+ * ECCC's published method uses a trailing 3-hour average, but that delays the
+ * curve ~1 h; centring it keeps the AQHI aligned in time with the raw hourly data
+ * (and the US-AQI line on the graph). Windows clamp at the series ends.
  */
 export function computeAqhiSeries(input: AqhiInput): number[] {
   const { ozone, nitrogen_dioxide, pm2_5 } = input;
@@ -73,7 +80,7 @@ export function computeAqhiSeries(input: AqhiInput): number[] {
   const avg3 = (arr: number[], i: number): number => {
     let sum = 0;
     let count = 0;
-    for (let k = Math.max(0, i - 2); k <= i; k++) {
+    for (let k = Math.max(0, i - 1); k <= i + 1; k++) {
       const v = arr?.[k];
       if (Number.isFinite(v)) {
         sum += v;

@@ -4,9 +4,19 @@ import { WeatherIcon } from "./WeatherIcon";
 import { formatFullDate, formatMonthDay, formatWeekday, parseLocal } from "../utils/format";
 import { formatPrecip, formatTemp, type Units } from "../utils/units";
 import { aqhiCategory, formatAqhi } from "../utils/aqhi";
+import { aqiColor, type AirMode } from "../api/airQualityGrid";
 import { useAppDispatch, useAppSelector } from "../store";
 import { closeDay, openDay } from "../store/readoutSlice";
 import type { DailySummary } from "../utils/series";
+
+const rgb = (c: [number, number, number]) => `rgb(${c[0]},${c[1]},${c[2]})`;
+/** Formatted value + colour for a day's peak air-quality reading, per index. */
+function airFact(value: number | null | undefined, index: AirMode): { text: string; color?: string } {
+  if (value == null || !Number.isFinite(value)) return { text: "–" };
+  return index === "aqi"
+    ? { text: String(Math.round(value)), color: rgb(aqiColor(value)) }
+    : { text: formatAqhi(value), color: aqhiCategory(value).color };
+}
 
 interface Props {
   summaries: DailySummary[];
@@ -17,8 +27,10 @@ interface Props {
    *  when the window is panned by a fraction of a day. */
   windowStart: string;
   windowEnd: string;
-  /** Peak AQHI per day (YYYY-MM-DD → value) for the day popup; absent days show "–". */
-  dailyAqhi?: Map<string, number>;
+  /** Peak air-quality value per day (YYYY-MM-DD → value) for the day popup. */
+  dailyAir?: Map<string, number>;
+  /** Which air index `dailyAir` holds. */
+  airIndex?: AirMode;
 }
 
 const CARD_HALF = 140; // half the popover width, for edge clamping
@@ -30,7 +42,15 @@ const DAY_MS = 86_400_000;
  * The 56px side padding matches the ECharts grid inset so days line up with the
  * chart columns below.
  */
-export function ForecastHeader({ summaries, units, todayKey, windowStart, windowEnd, dailyAqhi }: Props) {
+export function ForecastHeader({
+  summaries,
+  units,
+  todayKey,
+  windowStart,
+  windowEnd,
+  dailyAir,
+  airIndex = "aqhi",
+}: Props) {
   // The open readout lives in the store so it's mutually exclusive with the chart's
   // hover tooltip — opening one closes the other (see store/readoutSlice.ts).
   const readout = useAppSelector((s) => s.readout);
@@ -68,7 +88,7 @@ export function ForecastHeader({ summaries, units, todayKey, windowStart, window
   const active =
     readout.kind === "day" ? summaries.find((s) => s.date === readout.date) ?? null : null;
   const activeWx = active ? describeWeather(active.code) : null;
-  const activeAqhi = active ? dailyAqhi?.get(active.date) : undefined;
+  const activeAir = airFact(active ? dailyAir?.get(active.date) : undefined, airIndex);
 
   return (
     <div className="forecast-header" ref={rowRef}>
@@ -123,11 +143,7 @@ export function ForecastHeader({ summaries, units, todayKey, windowStart, window
             <Fact k="Chance" v={`${Math.round(active.precipProbMax ?? 0)}%`} />
             <Fact k="Precip" v={formatPrecip(active.precipSum)} />
             <Fact k="UV max" v={String(Math.round(active.uvMax ?? 0))} />
-            <Fact
-              k="Air quality"
-              v={formatAqhi(activeAqhi)}
-              color={activeAqhi != null ? aqhiCategory(activeAqhi).color : undefined}
-            />
+            <Fact k={airIndex === "aqi" ? "AQI" : "AQHI"} v={activeAir.text} color={activeAir.color} />
           </div>
         </div>
       ) : null}

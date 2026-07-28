@@ -3,11 +3,13 @@ import { buildMeteogramOption } from "./meteogramOption";
 import { ForecastHeader } from "./ForecastHeader";
 import { computeHorizontalLayout, tempTopEmptyFraction } from "./meteogramLayout";
 import { useECharts } from "../hooks/useECharts";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTheme } from "../hooks/useTheme";
 import { chartPalette } from "../theme/palette";
 import { useAppDispatch } from "../store";
 import { closeHover, openHover } from "../store/readoutSlice";
 import type { Bands } from "../api/ensemble";
+import type { AirMode } from "../api/airQualityGrid";
 import type { PanelKey, SeriesKey } from "../hooks/useUrlState";
 import type { Units } from "../utils/units";
 import type { DailySummary, HourlyPoint } from "../utils/series";
@@ -29,10 +31,12 @@ interface Props {
   todayKey?: string;
   /** Series names hidden via the legend. */
   hidden?: string[];
-  /** AQHI per hour (aligned to hourly.time) for the integrated air-quality panel. */
-  aqhi?: (number | null)[];
-  /** Peak AQHI per day (YYYY-MM-DD → value) for the day popups. */
-  dailyAqhi?: Map<string, number>;
+  /** Air-quality value per hour (active index), aligned to hourly.time. */
+  air?: (number | null)[];
+  /** Which air index is shown (AQHI or AQI). */
+  airIndex?: AirMode;
+  /** Peak air-quality value per day (YYYY-MM-DD → value) for the day popups. */
+  dailyAir?: Map<string, number>;
 }
 
 const HOVER_BOOST = 1.8;
@@ -55,15 +59,19 @@ export function Meteogram({
   daily,
   todayKey,
   hidden,
-  aqhi,
-  dailyAqhi,
+  air,
+  airIndex,
+  dailyAir,
 }: Props) {
   const { theme } = useTheme();
   const dispatch = useAppDispatch();
   const integrated = !!daily && daily.length > 0;
   const palette = chartPalette(theme);
-  // Drop the air panel when there's no AQHI data for this window.
-  const effPanels = aqhi ? panels : panels.filter((p) => p !== "air");
+  // Mobile: strip units from the %/pressure axis labels to save horizontal space.
+  const compact = useMediaQuery("(max-width: 640px)");
+  // The caller (chartPanels) already decides whether the air panel is on — keep it
+  // even without data, so the axis still shows (an empty air panel).
+  const effPanels = panels;
   // Which line the cursor is on. A ref (not state) so hovering never re-renders
   // React; the tooltip formatter reads it live to bold the matching row.
   const hoveredRef = useRef<string | null>(null);
@@ -83,10 +91,12 @@ export function Meteogram({
       headroom: integrated,
       getHovered,
       hidden,
-      aqhi,
+      air,
+      airIndex,
+      compact,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hourly, units, series.join(","), effPanels.join(","), tempBand, precipBand, nowIso, currentIso, theme, integrated, (hidden ?? []).join(","), aqhi]);
+  }, [hourly, units, series.join(","), effPanels.join(","), tempBand, precipBand, nowIso, currentIso, theme, integrated, (hidden ?? []).join(","), air, airIndex, compact]);
 
   const { containerRef: ref, chartRef } = useECharts(option);
 
@@ -195,7 +205,8 @@ export function Meteogram({
             todayKey={todayKey}
             windowStart={hourly.time[0]}
             windowEnd={hourly.time[hourly.time.length - 1]}
-            dailyAqhi={dailyAqhi}
+            dailyAir={dailyAir}
+            airIndex={airIndex}
           />
         </div>
       ) : null}

@@ -39,14 +39,61 @@ describe("buildMeteogramOption", () => {
     nowIso: "2026-07-22T11:00",
   };
 
-  it("builds three stacked grids with all panels enabled", () => {
-    const opt = buildMeteogramOption({ ...base, series: [...base.series], panels: [...base.panels] });
-    expect(opt.grid).toHaveLength(3);
+  type YAxis = {
+    min?: number;
+    max?: number;
+    scale?: boolean;
+    position?: string;
+    axisLabel?: { formatter?: string; show?: boolean };
+  };
+  const pctAxes = (opt: ReturnType<typeof buildMeteogramOption>) =>
+    (opt.yAxis as YAxis[]).filter((y) => y.max === 100);
+
+  it("pins chance-of-precip and cloud-cover axes to 0–100 (never auto-zoomed)", () => {
+    // cloudCover sample data spans only ~40–67, yet the axes must still read 0–100.
+    const axes = pctAxes(buildMeteogramOption({ ...base, series: ["temp"], panels: ["precip", "atmo"] }));
+    expect(axes).toHaveLength(2); // chance-of-precip + cloud/humidity
+    for (const y of axes) {
+      expect(y.min).toBe(0);
+      expect(y.max).toBe(100);
+      expect(y.scale).toBeFalsy();
+    }
+  });
+
+  it("hides ALL right-axis labels on mobile and drops the % from the left one", () => {
+    const wide = buildMeteogramOption({ ...base, series: ["temp", "enthalpy"], panels: ["precip", "atmo"] });
+    const mobile = buildMeteogramOption({ ...base, series: ["temp", "enthalpy"], panels: ["precip", "atmo"], compact: true });
+    const rightAxes = (opt: ReturnType<typeof buildMeteogramOption>) =>
+      (opt.yAxis as YAxis[]).filter((y) => y.position === "right"); // enthalpy, prob, pressure
+    expect(rightAxes(wide)).toHaveLength(3);
+    expect(rightAxes(wide).every((y) => y.axisLabel?.show !== false)).toBe(true); // shown on desktop
+    expect(rightAxes(mobile).every((y) => y.axisLabel?.show === false)).toBe(true); // all hidden on mobile
+    // The LEFT %-axis (cloud/humidity) keeps its numbers but drops the "%" unit.
+    const leftPct = (opt: ReturnType<typeof buildMeteogramOption>) =>
+      (opt.yAxis as YAxis[]).find((y) => y.max === 100 && y.position !== "right");
+    expect(leftPct(wide)?.axisLabel?.formatter).toBe("{value}%");
+    expect(leftPct(mobile)?.axisLabel?.formatter).toBe("{value}");
+  });
+
+  it("shrinks the right grid inset on mobile so the plot uses the reclaimed space", () => {
+    const grid = (opt: ReturnType<typeof buildMeteogramOption>) =>
+      (opt.grid as { left: number; right: number }[])[0];
+    expect(grid(buildMeteogramOption({ ...base, series: ["temp"], panels: ["precip", "atmo"] })).right).toBe(56);
+    const mobile = grid(buildMeteogramOption({ ...base, series: ["temp"], panels: ["precip", "atmo"], compact: true }));
+    expect(mobile.right).toBeLessThan(20); // reclaimed
+    expect(mobile.left).toBe(56); // left gutter unchanged (holds the axis labels)
+  });
+
+  it("builds four stacked grids with all panels enabled", () => {
+    const air = base.hourly.time.map((_, i) => 2 + (i % 6));
+    const opt = buildMeteogramOption({ ...base, series: [...base.series], panels: [...base.panels], air });
+    expect(opt.grid).toHaveLength(4); // temp + precip + atmo + air
     const names = seriesNames(opt);
     expect(names).toContain("Temperature");
     expect(names).toContain("Precipitation");
     expect(names).toContain("Cloud cover");
     expect(names).toContain("Pressure");
+    expect(names).toContain("Air quality");
   });
 
   it("drops panels and series that are toggled off", () => {
@@ -98,18 +145,52 @@ describe("buildMeteogramOption", () => {
     expect(Math.max(...temp!.data)).toBeGreaterThan(50);
   });
 
-  it("adds an AQHI air panel (with band-coloring visualMap) when aqhi data is supplied", () => {
-    const aqhi = base.hourly.time.map((_, i) => 2 + (i % 6));
-    const opt = buildMeteogramOption({ ...base, series: ["temp"], panels: ["air"], aqhi });
+  it("adds an air panel (with band-colouring visualMap) when air data is supplied", () => {
+    const air = base.hourly.time.map((_, i) => 2 + (i % 6));
+    const opt = buildMeteogramOption({ ...base, series: ["temp"], panels: ["air"], air });
     expect(opt.grid).toHaveLength(2); // temp + air
     expect(seriesNames(opt)).toContain("Air quality");
     expect(opt.visualMap).toBeTruthy();
   });
 
-  it("omits the air panel when no aqhi data is supplied", () => {
-    const opt = buildMeteogramOption({ ...base, series: ["temp"], panels: ["air"] });
+  it("scales/labels the air axis per index (AQHI vs AQI)", () => {
+    const yName = (opt: ReturnType<typeof buildMeteogramOption>) =>
+      (opt.yAxis as { name?: string }[]).find((y) => y.name === "AQHI" || y.name === "AQI");
+    const aqhiOpt = buildMeteogramOption({
+      ...base,
+      series: ["temp"],
+      panels: ["air"],
+      air: base.hourly.time.map(() => 4),
+      airIndex: "aqhi",
+    });
+    const aqiOpt = buildMeteogramOption({
+      ...base,
+      series: ["temp"],
+      panels: ["air"],
+      air: base.hourly.time.map(() => 120),
+      airIndex: "aqi",
+    });
+    expect(yName(aqhiOpt)?.name).toBe("AQHI");
+    expect((yName(aqhiOpt) as { max: number }).max).toBeLessThanOrEqual(11);
+    expect(yName(aqiOpt)?.name).toBe("AQI");
+    expect((yName(aqiOpt) as { max: number }).max).toBeGreaterThanOrEqual(120);
+  });
+
+  it("keeps the air panel/axis (default bounds) when toggled on but with no data", () => {
+    const opt = buildMeteogramOption({ ...base, series: ["temp"], panels: ["air"], airIndex: "aqhi" });
+    expect(opt.grid).toHaveLength(2); // temp + air — the axis stays
+    expect(seriesNames(opt)).not.toContain("Air quality"); // but no line is drawn
+    expect(opt.visualMap).toBeUndefined();
+    const airAxis = (opt.yAxis as { name?: string; max?: number }[]).find((y) => y.name === "AQHI");
+    expect(airAxis?.max).toBe(10); // sensible default AQHI bound
+    expect((buildMeteogramOption({ ...base, series: ["temp"], panels: ["air"], airIndex: "aqi" })
+      .yAxis as { name?: string; max?: number }[]).find((y) => y.name === "AQI")?.max).toBe(100);
+  });
+
+  it("drops the air panel entirely when it isn't in panels (toggled off)", () => {
+    const opt = buildMeteogramOption({ ...base, series: ["temp"], panels: [] });
     expect(opt.grid).toHaveLength(1); // temp only
-    expect(seriesNames(opt)).not.toContain("Air quality");
+    expect((opt.yAxis as { name?: string }[]).some((y) => y.name === "AQHI" || y.name === "AQI")).toBe(false);
   });
 
   it("shows chance-of-precip only from the current time forward", () => {

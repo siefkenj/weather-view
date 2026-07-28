@@ -1,29 +1,29 @@
-// A Leaflet GridLayer that paints an interpolated air-quality field from a set of
-// sample points (inverse-distance weighting). Lives in the radar lazy chunk (it
-// imports Leaflet). Per tile we IDW a coarse low-res grid then let the canvas
-// bilinear-upscale it, which keeps the field smooth without a pixel-by-pixel pass.
+// A Leaflet GridLayer that paints a smooth air-quality field from the sample grid.
+// The samples come from a regular n×n lat/lon lattice (api/airQualityGrid), so we
+// BILINEARLY interpolate between the four lattice nodes surrounding each pixel — the
+// correct interpolant for gridded data. (Inverse-distance weighting, used before,
+// is an *exact* interpolator: every node becomes a local extremum, which shows up as
+// a regular grid of "hot-spot" bullseyes fading in and out between nodes.)
 //
-// New samples repaint the EXISTING tile canvases in place rather than calling
-// redraw() — redraw() tears down and rebuilds every tile DOM node, which flashes
-// the layer on each update (very visible while the radar timeline is playing).
-// We also skip the repaint entirely when the values are unchanged: radar frames
-// step every ~10 min but AQI is hourly, so most frame advances are a no-op.
+// Lives in the radar lazy chunk (imports Leaflet). New samples repaint the EXISTING
+// tile canvases in place rather than calling redraw() (which tears down/rebuilds tile
+// DOM nodes and flashes the layer). We also skip the repaint when values are unchanged
+// (AQI is hourly, so most timeline steps are a no-op).
 
 import * as L from "leaflet";
-import { aqiColor, aqiAlpha, type AqiSample } from "../api/airQualityGrid";
+import { airFieldColor, airFieldAlpha, type AirMode, type AqiSample } from "../api/airQualityGrid";
 
-const IDW_POWER = 2; // weight ∝ distance^-IDW_POWER
-const CELL = 4; // px between IDW samples within a tile (upscaled for smoothness)
+const CELL = 4; // px between evaluated samples within a tile (upscaled for smoothness)
 
-interface Sample {
+interface Node {
   lat: number;
   lon: number;
-  aqi: number;
+  aqi: number | null;
 }
 
 type TileEntry = { el: HTMLCanvasElement; coords: L.Coords };
 
-const sameSamples = (a: Sample[], b: Sample[]): boolean => {
+const sameGrid = (a: Node[], b: Node[]): boolean => {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (a[i].aqi !== b[i].aqi || a[i].lat !== b[i].lat || a[i].lon !== b[i].lon) return false;
@@ -32,15 +32,25 @@ const sameSamples = (a: Sample[], b: Sample[]): boolean => {
 };
 
 export class AqiGridLayer extends L.GridLayer {
-  private _samples: Sample[] = [];
+  // Row-major (i = lat row south→north, j = lon col west→east) n×n grid of nodes.
+  private _grid: Node[] = [];
+  private _n = 0;
+  private _mode: AirMode = "aqi";
 
-  /** Replace the sample set and repaint in place. Values of null are dropped. */
+  /** Replace the sample grid (row-major n×n) and repaint in place. */
   setSamples(samples: AqiSample[]): void {
-    const next: Sample[] = samples
-      .filter((s): s is AqiSample & { aqi: number } => s.aqi != null)
-      .map((s) => ({ lat: s.lat, lon: s.lon, aqi: s.aqi }));
-    if (sameSamples(this._samples, next)) return; // nothing to redraw → no flash
-    this._samples = next;
+    const next: Node[] = samples.map((s) => ({ lat: s.lat, lon: s.lon, aqi: s.aqi }));
+    const n = Math.round(Math.sqrt(next.length));
+    if (this._n === n && sameGrid(this._grid, next)) return;
+    this._grid = next;
+    this._n = n * n === next.length ? n : 0; // only a perfect square is a usable grid
+    this._repaintTiles();
+  }
+
+  /** Switch the index (AQHI vs AQI) the field is coloured for, and repaint. */
+  setMode(mode: AirMode): void {
+    if (mode === this._mode) return;
+    this._mode = mode;
     this._repaintTiles();
   }
 
@@ -68,18 +78,20 @@ export class AqiGridLayer extends L.GridLayer {
     const map = (this as unknown as { _map: L.Map | null })._map;
     if (!ctx) return;
     ctx.clearRect(0, 0, tile.width, tile.height);
-    if (!map || this._samples.length === 0) return;
+    const n = this._n;
+    const grid = this._grid;
+    if (!map || n < 2) return;
 
     const size = this.getTileSize();
-    // Sample positions in this tile's pixel space (project at the tile's zoom,
-    // then shift by the tile origin).
     const origin = coords.scaleBy(size);
-    const pts = this._samples.map((s) => {
-      const p = map.project([s.lat, s.lon], coords.z);
-      return { x: p.x - origin.x, y: p.y - origin.y, aqi: s.aqi };
-    });
+    // The lattice is a regular lat/lon grid: every column shares a lon (→ one tile-x)
+    // and every row shares a lat (→ one tile-y). Project the edges once.
+    const colX: number[] = new Array(n);
+    for (let j = 0; j < n; j++) colX[j] = map.project([grid[0].lat, grid[j].lon], coords.z).x - origin.x;
+    const rowY: number[] = new Array(n); // monotonically DECREASING (north = smaller y)
+    for (let i = 0; i < n; i++) rowY[i] = map.project([grid[i * n].lat, grid[0].lon], coords.z).y - origin.y;
+    const dxCol = (colX[n - 1] - colX[0]) / (n - 1) || 1; // columns are evenly spaced in x
 
-    // Low-resolution IDW grid, drawn to an offscreen canvas...
     const lw = Math.ceil(size.x / CELL) + 1;
     const lh = Math.ceil(size.y / CELL) + 1;
     const off = document.createElement("canvas");
@@ -89,38 +101,72 @@ export class AqiGridLayer extends L.GridLayer {
     if (!octx) return;
     const img = octx.createImageData(lw, lh);
 
+    const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
     for (let gy = 0; gy < lh; gy++) {
+      const py = gy * CELL;
+      // Cell row i such that rowY[i] >= py >= rowY[i+1] (rowY decreasing), clamped to
+      // the grid at the edges (so tiles beyond the sampled area extend the edge value).
+      let i: number;
+      if (py >= rowY[0]) i = 0;
+      else if (py <= rowY[n - 1]) i = n - 2;
+      else {
+        i = 0;
+        while (i < n - 2 && rowY[i + 1] > py) i++;
+      }
+      const fy = clamp01((rowY[i] - py) / (rowY[i] - rowY[i + 1] || 1));
+
       for (let gx = 0; gx < lw; gx++) {
         const px = gx * CELL;
-        const py = gy * CELL;
-        let num = 0;
-        let den = 0;
-        let exact = -1;
-        for (const s of pts) {
-          const dx = px - s.x;
-          const dy = py - s.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 < 1) {
-            exact = s.aqi;
-            break;
-          }
-          const w = 1 / Math.pow(d2, IDW_POWER / 2);
-          num += w * s.aqi;
-          den += w;
+        let j = Math.floor((px - colX[0]) / dxCol);
+        j = j < 0 ? 0 : j > n - 2 ? n - 2 : j;
+        const fx = clamp01((px - colX[j]) / dxCol);
+
+        // Bilinear over the four corner nodes, skipping any that are null.
+        const v00 = grid[i * n + j].aqi;
+        const v01 = grid[i * n + j + 1].aqi;
+        const v10 = grid[(i + 1) * n + j].aqi;
+        const v11 = grid[(i + 1) * n + j + 1].aqi;
+        let vsum = 0;
+        let wsum = 0;
+        const w00 = (1 - fx) * (1 - fy);
+        const w01 = fx * (1 - fy);
+        const w10 = (1 - fx) * fy;
+        const w11 = fx * fy;
+        if (v00 != null) {
+          vsum += w00 * v00;
+          wsum += w00;
         }
-        const val = exact >= 0 ? exact : num / den;
-        const [r, g, b] = aqiColor(val);
+        if (v01 != null) {
+          vsum += w01 * v01;
+          wsum += w01;
+        }
+        if (v10 != null) {
+          vsum += w10 * v10;
+          wsum += w10;
+        }
+        if (v11 != null) {
+          vsum += w11 * v11;
+          wsum += w11;
+        }
+
         const idx = (gy * lw + gx) * 4;
+        if (wsum === 0) {
+          img.data[idx + 3] = 0;
+          continue;
+        }
+        const val = vsum / wsum;
+        const [r, g, b] = airFieldColor(val, this._mode);
         img.data[idx] = r;
         img.data[idx + 1] = g;
         img.data[idx + 2] = b;
-        // Per-pixel alpha: "good" air is fully transparent, worse air semi-opaque.
-        img.data[idx + 3] = Math.round(aqiAlpha(val) * 255);
+        // Per-pixel alpha: low-risk air is fully transparent, worse air semi-opaque.
+        img.data[idx + 3] = Math.round(airFieldAlpha(val, this._mode) * 255);
       }
     }
     octx.putImageData(img, 0, 0);
 
-    // ...then bilinear-upscale onto the real tile.
+    // Bilinear-upscale the low-res field onto the real tile.
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(off, 0, 0, lw, lh, 0, 0, size.x, size.y);
   }

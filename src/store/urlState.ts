@@ -5,6 +5,10 @@
 
 import { MAX_FORECAST_DAYS } from "../api/openMeteo";
 import type { Units } from "../utils/units";
+import type { AirMode } from "../utils/airColors";
+
+/** The forecast graph's air-quality panel: off, or showing one of the two indices. */
+export type AirPanelMode = "off" | AirMode;
 
 export type SeriesKey = "temp" | "feels" | "dew" | "wetbulb" | "enthalpy";
 export type PanelKey = "precip" | "atmo" | "air";
@@ -42,6 +46,8 @@ export interface DashboardState {
   ci: boolean;
   extraModels: string[];
   units: Units;
+  /** Air-quality index shown on the forecast graph (or off). Persisted in the URL. */
+  airMode: AirPanelMode;
 }
 
 export const DEFAULTS: DashboardState = {
@@ -53,6 +59,7 @@ export const DEFAULTS: DashboardState = {
   ci: false,
   extraModels: [],
   units: "metric",
+  airMode: "aqhi",
 };
 
 
@@ -87,6 +94,9 @@ export function parseState(params: URLSearchParams): DashboardState {
 
   const units: Units = params.get("units") === "imperial" ? "imperial" : "metric";
 
+  const airRaw = params.get("air");
+  const airMode: AirPanelMode = airRaw === "off" || airRaw === "aqi" ? airRaw : "aqhi";
+
   return {
     days,
     viewStart: null, // session-only pan state; never read from the URL
@@ -96,6 +106,7 @@ export function parseState(params: URLSearchParams): DashboardState {
     ci: params.get("ci") === "1",
     extraModels,
     units,
+    airMode,
   };
 }
 
@@ -107,6 +118,7 @@ export function serializeState(state: DashboardState): URLSearchParams {
   if (state.ci) params.set("ci", "1");
   if (state.extraModels.length) params.set("models", state.extraModels.join(","));
   if (state.units !== DEFAULTS.units) params.set("units", state.units);
+  if (state.airMode !== DEFAULTS.airMode) params.set("air", state.airMode);
   return params;
 }
 

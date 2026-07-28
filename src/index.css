@@ -672,10 +672,17 @@ button {
   right: 56px;
   top: 0;
   bottom: 0;
+  /* On mobile the chart's right inset shrinks (right-axis labels are hidden), so
+     the day tiles must extend to match. Keep this in sync with AXIS_GUTTER_RIGHT_MOBILE. */
   /* Clip the tiles to the plot region so they never overlap the y-axis labels in
      the gutters — the axis reads on top of the day icons. */
   overflow-x: clip;
   overflow-y: visible;
+}
+@media (max-width: 640px) {
+  .forecast-header__row {
+    right: 8px;
+  }
 }
 /* Tiles are absolutely positioned at their day column (left/width set inline) and
    centred on it, so they slide with the chart when it's panned fractionally. */
@@ -796,6 +803,55 @@ button {
 }
 .legend-item--off {
   opacity: 0.55;
+}
+/* Three-way air-quality toggle (off / AQHI / AQI) for the graph. No pill outline —
+   it sits inline like every other legend entry (same padding + hover), just with a
+   checkbox-like box. Reuses .air-idx / .air-idx--on for the active-index emphasis. */
+.legend-air-tri {
+  background: transparent;
+  gap: 5px;
+}
+.legend-air-tri:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+/* The pill hosts three buttons but must read as one line of text: the words
+   "Air quality" cycle the mode, AQHI / AQI jump straight to that index. Strip the
+   buttons' native chrome so only .air-idx--on / the checkbox provide emphasis. */
+.legend-air-tri__toggle {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* AQHI / AQI flow inline so the parentheses hug them like the old plain text did. */
+.legend-air-tri__idx {
+  display: inline;
+}
+.legend-air-tri__box {
+  width: 14px;
+  height: 14px;
+  /* Unchecked = an empty, clearly-outlined box (not the faint --border, which reads
+     as disabled next to the coloured legend swatches). Checked fills with accent. */
+  border: 1px solid var(--text-dim);
+  border-radius: 4px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+  color: #fff;
+}
+.legend-air-tri__box.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .legend-swatch {
   width: 13px;
@@ -1243,12 +1299,73 @@ button {
   cursor: pointer;
   user-select: none;
 }
-.radar-check input {
+/* Every toggle in the radar options shares ONE checkbox look. The native Radar/Wind
+   inputs are stripped (appearance:none) and drawn by us so they're pixel-identical to
+   the custom tri-state air-quality box (.radar-check__box) below — empty outline when
+   off, accent fill + ✓ when on. .radar-check__box repeats the same declarations
+   because it's a <span> (the air toggle is a button, not a checkbox). */
+.radar-check input[type="checkbox"],
+.radar-check__box {
+  flex: none;
   width: 16px;
   height: 16px;
   margin: 0;
-  accent-color: var(--accent);
+  border: 1px solid var(--text-dim);
+  border-radius: 4px;
+  background: transparent;
+  display: inline-grid;
+  place-content: center;
+  font-size: 11px;
+  line-height: 1;
+  color: #fff;
   cursor: pointer;
+}
+.radar-check input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+}
+.radar-check input[type="checkbox"]:checked,
+.radar-check__box.is-checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.radar-check input[type="checkbox"]:checked::after {
+  content: "✓";
+}
+.radar-check input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Three-way air-quality toggle: a button styled like the checkbox rows, with a
+   checkbox-like box plus emphasised active index (AQHI / AQI). */
+.radar-check--tri {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+}
+.air-idx {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.air-idx--on {
+  font-weight: 800;
+  color: var(--accent);
+}
+/* AQHI / AQI as buttons: reset chrome but leave weight + color to .air-idx(--on). */
+.air-idx--btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  cursor: pointer;
+}
+.air-idx--btn:hover {
+  text-decoration: underline;
 }
 .aqi-legend {
   position: absolute;

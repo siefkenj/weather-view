@@ -6,6 +6,13 @@ import type { PanelKey } from "../hooks/useUrlState";
 
 export type PanelName = "temp" | "precip" | "atmo" | "air";
 
+/** Left plot inset (px): room for the left-axis title + tick labels. */
+export const AXIS_GUTTER = 56;
+/** Right plot inset (px) on mobile, where all right-axis labels are hidden so the
+ *  plot reclaims the space. Desktop uses AXIS_GUTTER on both sides. Kept in sync
+ *  with the `.forecast-header__row` right inset in index.css. */
+export const AXIS_GUTTER_RIGHT_MOBILE = 8;
+
 export interface HorizontalLayout {
   panelKeys: PanelName[];
   grids: { top: number; height: number }[];

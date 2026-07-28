@@ -8,6 +8,23 @@
 // each point's series. The map interpolates the resulting samples into a smooth
 // field client-side (see components/aqiGridLayer.ts).
 
+import { computeAqhiSeries } from "../utils/aqhi";
+import type { AirMode } from "../utils/airColors";
+
+// The unified air-quality colour scheme (shared by every chart) lives in
+// utils/airColors; re-exported here so existing import sites keep working.
+export {
+  aqiColor,
+  aqhiColor,
+  aqiAlpha,
+  aqhiAlpha,
+  airFieldColor,
+  airFieldAlpha,
+  AQI_LEGEND,
+  AQHI_LEGEND,
+} from "../utils/airColors";
+export type { AirMode } from "../utils/airColors";
+
 const AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality";
 
 export interface LatLonBounds {
@@ -56,19 +73,31 @@ export function aqiGridPoints(bounds: LatLonBounds, n = AQI_GRID_N): { lat: numb
 interface AqLocation {
   latitude: number;
   longitude: number;
-  hourly?: { time?: number[]; us_aqi?: (number | null)[] };
+  hourly?: {
+    time?: number[];
+    us_aqi?: (number | null)[];
+    pm2_5?: (number | null)[];
+    ozone?: (number | null)[];
+    nitrogen_dioxide?: (number | null)[];
+  };
 }
 
 /**
- * Fetch an hourly US-AQI grid across `bounds` in one multi-location request.
- * All locations share the same hourly axis, so we take it from the first result.
+ * Fetch an hourly air-quality grid across `bounds` in one multi-location request,
+ * for either index. For AQI we take `us_aqi` directly; for AQHI we fetch the three
+ * pollutants and compute the index per point (same method as the AQ panel). All
+ * locations share the same hourly axis, so we take it from the first result.
  */
-export async function fetchAqiGrid(bounds: LatLonBounds, signal?: AbortSignal): Promise<AqiGrid> {
+export async function fetchAqiGrid(
+  bounds: LatLonBounds,
+  mode: AirMode,
+  signal?: AbortSignal,
+): Promise<AqiGrid> {
   const pts = aqiGridPoints(bounds);
   const url = new URL(AIR_QUALITY_URL);
   url.searchParams.set("latitude", pts.map((p) => p.lat.toFixed(4)).join(","));
   url.searchParams.set("longitude", pts.map((p) => p.lon.toFixed(4)).join(","));
-  url.searchParams.set("hourly", "us_aqi");
+  url.searchParams.set("hourly", mode === "aqhi" ? "pm2_5,ozone,nitrogen_dioxide" : "us_aqi");
   url.searchParams.set("timeformat", "unixtime");
   url.searchParams.set("timezone", "GMT");
   url.searchParams.set("past_days", "1");
@@ -82,9 +111,18 @@ export async function fetchAqiGrid(bounds: LatLonBounds, signal?: AbortSignal): 
   const points = list.map((loc) => ({
     lat: loc.latitude,
     lon: loc.longitude,
-    values: loc.hourly?.us_aqi ?? [],
+    values: mode === "aqhi" ? aqhiSeriesFor(loc.hourly) : (loc.hourly?.us_aqi ?? []),
   }));
   return { times, points };
+}
+
+/** Per-hour AQHI for one location (NaN → null so gaps interpolate/skip cleanly). */
+function aqhiSeriesFor(hourly: AqLocation["hourly"]): (number | null)[] {
+  return computeAqhiSeries({
+    ozone: (hourly?.ozone ?? []) as number[],
+    nitrogen_dioxide: (hourly?.nitrogen_dioxide ?? []) as number[],
+    pm2_5: (hourly?.pm2_5 ?? []) as number[],
+  }).map((v) => (Number.isFinite(v) ? v : null));
 }
 
 /**
@@ -121,59 +159,3 @@ export function sampleAqiGridAt(grid: AqiGrid, unixSec: number): AqiSample[] {
   });
 }
 
-// US EPA AQI colour breakpoints, interpolated smoothly by value so the field
-// reads as a gradient rather than hard category bands.
-const AQI_STOPS: { v: number; c: [number, number, number] }[] = [
-  { v: 0, c: [0, 228, 0] }, // Good
-  { v: 50, c: [0, 228, 0] },
-  { v: 100, c: [255, 255, 0] }, // Moderate
-  { v: 150, c: [255, 126, 0] }, // Unhealthy for sensitive groups
-  { v: 200, c: [255, 0, 0] }, // Unhealthy
-  { v: 300, c: [143, 63, 151] }, // Very unhealthy
-  { v: 500, c: [126, 0, 35] }, // Hazardous
-];
-
-/** Map a US AQI value to an [r,g,b] colour, interpolating between EPA anchors. */
-export function aqiColor(aqi: number): [number, number, number] {
-  if (Number.isNaN(aqi)) return [128, 128, 128];
-  if (aqi <= AQI_STOPS[0].v) return AQI_STOPS[0].c;
-  const last = AQI_STOPS[AQI_STOPS.length - 1];
-  if (aqi >= last.v) return last.c;
-  for (let k = 1; k < AQI_STOPS.length; k++) {
-    const b = AQI_STOPS[k];
-    if (aqi <= b.v) {
-      const a = AQI_STOPS[k - 1];
-      const t = (aqi - a.v) / (b.v - a.v);
-      return [
-        Math.round(a.c[0] + (b.c[0] - a.c[0]) * t),
-        Math.round(a.c[1] + (b.c[1] - a.c[1]) * t),
-        Math.round(a.c[2] + (b.c[2] - a.c[2]) * t),
-      ];
-    }
-  }
-  return last.c;
-}
-
-// "Good" air (AQI ≤ 50) is fully transparent; worse air fades in to a semi-
-// transparent tint. The ramp spans the whole "Moderate" band (50→100) so the
-// greenish low end stays faint and only orange/red reach full opacity.
-const AQI_GOOD_MAX = 50;
-const AQI_FADE_END = 100;
-const AQI_SEMI_ALPHA = 0.6;
-
-/** Overlay opacity (0..1) for a US AQI value: 0 when good, up to semi otherwise. */
-export function aqiAlpha(aqi: number): number {
-  if (Number.isNaN(aqi) || aqi <= AQI_GOOD_MAX) return 0;
-  if (aqi >= AQI_FADE_END) return AQI_SEMI_ALPHA;
-  return (AQI_SEMI_ALPHA * (aqi - AQI_GOOD_MAX)) / (AQI_FADE_END - AQI_GOOD_MAX);
-}
-
-/** Legend categories (label + representative colour) for the overlay key. */
-export const AQI_LEGEND: { label: string; max: number; color: string }[] = [
-  { label: "Good", max: 50, color: "rgb(0,228,0)" },
-  { label: "Moderate", max: 100, color: "rgb(255,255,0)" },
-  { label: "Sensitive", max: 150, color: "rgb(255,126,0)" },
-  { label: "Unhealthy", max: 200, color: "rgb(255,0,0)" },
-  { label: "Very unhealthy", max: 300, color: "rgb(143,63,151)" },
-  { label: "Hazardous", max: 500, color: "rgb(126,0,35)" },
-];

@@ -8,6 +8,7 @@ import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import {
   DEFAULTS,
   parseState,
+  type AirPanelMode,
   type DashboardState,
   type PanelKey,
   type SeriesKey,
@@ -49,6 +50,9 @@ const viewSlice = createSlice({
     setUnits(state, action: PayloadAction<Units>) {
       state.units = action.payload;
     },
+    setAirMode(state, action: PayloadAction<AirPanelMode>) {
+      state.airMode = action.payload;
+    },
     setExtraModels(state, action: PayloadAction<string[]>) {
       state.extraModels = action.payload;
     },
@@ -68,6 +72,7 @@ export const {
   setZoom,
   setCi,
   setUnits,
+  setAirMode,
   setExtraModels,
   toggleSeries,
   togglePanel,

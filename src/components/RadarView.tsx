@@ -9,7 +9,14 @@ import { useRadarFramesQuery } from "../store/openMeteoApi";
 import { radarTileUrl, type RadarIndex } from "../api/rainviewer";
 import { AqiGridLayer } from "./aqiGridLayer";
 import { WindLayer } from "./windLayer";
-import { fetchAqiGrid, sampleAqiGridAt, AQI_LEGEND, type AqiGrid } from "../api/airQualityGrid";
+import {
+  fetchAqiGrid,
+  sampleAqiGridAt,
+  AQI_LEGEND,
+  AQHI_LEGEND,
+  type AqiGrid,
+  type AirMode,
+} from "../api/airQualityGrid";
 import { fetchWindPoints, windLatticePoints, dataZoomFor, WindFieldCache, type LatticePoint } from "../api/windGrid";
 import { useTheme } from "../hooks/useTheme";
 import type { Theme } from "../hooks/useTheme";
@@ -159,7 +166,8 @@ export default function RadarView({ place }: { place: Place }) {
   const [playing, setPlaying] = useState(false);
   const [visible, setVisible] = useState(false);
   const [radarOn, setRadarOn] = useState(true);
-  const [aqiOn, setAqiOn] = useState(false);
+  // Air-quality overlay: off, or showing one of the two indices.
+  const [airMode, setAirMode] = useState<"off" | AirMode>("off");
   const [windOn, setWindOn] = useState(false);
   const [aqiGrid, setAqiGrid] = useState<AqiGrid | null>(null);
   const [aqiError, setAqiError] = useState(false);
@@ -283,9 +291,13 @@ export default function RadarView({ place }: { place: Place }) {
     const map = mapRef.current;
     const layer = aqiLayerRef.current;
     if (!map || !layer) return;
-    if (aqiOn) layer.addTo(map);
-    else map.removeLayer(layer);
-  }, [aqiOn]);
+    if (airMode !== "off") {
+      layer.setMode(airMode); // colour for the chosen index before showing
+      layer.addTo(map);
+    } else {
+      map.removeLayer(layer);
+    }
+  }, [airMode]);
 
   // Add/remove the wind vector-field layer as it's toggled.
   useEffect(() => {
@@ -300,10 +312,10 @@ export default function RadarView({ place }: { place: Place }) {
   // field follows the radar scrubber. Re-runs on toggle-on with the cached grid.
   useEffect(() => {
     const layer = aqiLayerRef.current;
-    if (!layer || !aqiOn) return;
+    if (!layer || airMode === "off") return;
     const at = activeFrameTime ?? Date.now() / 1000;
     layer.setSamples(aqiGrid ? sampleAqiGridAt(aqiGrid, at) : []);
-  }, [aqiOn, aqiGrid, activeFrameTime]);
+  }, [airMode, aqiGrid, activeFrameTime]);
 
   // Same for the wind field: read the visible cached cells and interpolate the
   // vectors at the active timeline time. Re-runs when the cache/viewport changes
@@ -318,11 +330,14 @@ export default function RadarView({ place }: { place: Place }) {
     if (samples.length) layer.setSamples(samples);
   }, [windOn, windVersion, activeFrameTime]);
 
-  // Fetch an hourly US-AQI grid over the current view when the overlay is on,
-  // refetching (debounced) after each pan/zoom. One Open-Meteo call per view.
+  // Fetch an hourly air-quality grid (for the chosen index) over the current view
+  // when the overlay is on, refetching (debounced) after each pan/zoom. Also refetches
+  // when the index changes; the old grid is cleared first so it isn't recoloured wrong.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !aqiOn) return;
+    if (!map || airMode === "off") return;
+    const mode = airMode;
+    setAqiGrid(null);
     let timer = 0;
     let ctrl: AbortController | null = null;
     const load = () => {
@@ -331,6 +346,7 @@ export default function RadarView({ place }: { place: Place }) {
       const b = map.getBounds();
       fetchAqiGrid(
         { south: b.getSouth(), west: b.getWest(), north: b.getNorth(), east: b.getEast() },
+        mode,
         ctrl.signal,
       )
         .then((grid) => {
@@ -352,7 +368,7 @@ export default function RadarView({ place }: { place: Place }) {
       ctrl?.abort();
       map.off("moveend", onMove);
     };
-  }, [aqiOn]);
+  }, [airMode]);
 
   // Resample the wind lattice for the current view when the overlay is on. On each
   // (debounced) move we snap the viewport to the zoom's lattice, redraw immediately
@@ -452,6 +468,19 @@ export default function RadarView({ place }: { place: Place }) {
     };
   }, [playing, visible, stepCount, data, timeline]);
 
+  const airOn = airMode !== "off";
+  const airLegend =
+    airMode === "aqhi"
+      ? { title: "AQHI", low: "Low", high: "Very high", stops: AQHI_LEGEND }
+      : { title: "US AQI", low: "Good", high: "Hazardous", stops: AQI_LEGEND };
+  const airTitle =
+    airMode === "off"
+      ? "Air-quality overlay off. Click to show AQHI (Canada's Air Quality Health Index)."
+      : airMode === "aqhi"
+        ? "Showing AQHI (Air Quality Health Index). Click to switch to US AQI."
+        : "Showing US AQI (Air Quality Index). Click to turn the overlay off.";
+  const cycleAir = () => setAirMode((m) => (m === "off" ? "aqhi" : m === "aqhi" ? "aqi" : "off"));
+
   return (
     <section className="panel radar-panel" aria-label="Precipitation radar">
       <div className="radar-map-wrap">
@@ -461,17 +490,19 @@ export default function RadarView({ place }: { place: Place }) {
           aria-label={`Precipitation radar near ${place.name}`}
         />
 
-        {aqiOn ? (
+        {airOn ? (
           <div className="aqi-legend" aria-hidden="true">
-            <span className="aqi-legend__title">Air quality (US AQI){aqiError ? " · offline" : ""}</span>
+            <span className="aqi-legend__title">
+              Air quality ({airLegend.title}){aqiError ? " · offline" : ""}
+            </span>
             <div className="aqi-legend__scale">
-              {AQI_LEGEND.map((c) => (
+              {airLegend.stops.map((c) => (
                 <span key={c.label} className="aqi-legend__swatch" style={{ background: c.color }} title={c.label} />
               ))}
             </div>
             <div className="aqi-legend__ends">
-              <span>Good</span>
-              <span>Hazardous</span>
+              <span>{airLegend.low}</span>
+              <span>{airLegend.high}</span>
             </div>
           </div>
         ) : null}
@@ -493,10 +524,23 @@ export default function RadarView({ place }: { place: Place }) {
             <input type="checkbox" checked={radarOn} onChange={() => setRadarOn((v) => !v)} />
             Radar
           </label>
-          <label className="radar-check">
-            <input type="checkbox" checked={aqiOn} onChange={() => setAqiOn((v) => !v)} />
-            Air quality
-          </label>
+          <button
+            type="button"
+            className={"radar-check radar-check--tri" + (airOn ? " is-on" : "")}
+            onClick={cycleAir}
+            title={airTitle}
+            aria-label={`Air quality overlay: ${airMode === "off" ? "off" : airLegend.title}. Click to change.`}
+          >
+            <span className={"radar-check__box" + (airOn ? " is-checked" : "")} aria-hidden="true">
+              {airOn ? "✓" : ""}
+            </span>
+            <span>
+              Air Quality (
+              <span className={airMode === "aqhi" ? "air-idx air-idx--on" : "air-idx"}>AQHI</span>
+              {" / "}
+              <span className={airMode === "aqi" ? "air-idx air-idx--on" : "air-idx"}>AQI</span>)
+            </span>
+          </button>
           <label className="radar-check">
             <input type="checkbox" checked={windOn} onChange={() => setWindOn((v) => !v)} />
             Wind

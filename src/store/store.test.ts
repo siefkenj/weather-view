@@ -53,6 +53,7 @@ describe("urlState round-trip", () => {
       ci: true,
       extraModels: ["jma_seamless"],
       units: "imperial" as const,
+      airMode: "aqi" as const,
     };
     const round = parseState(new URLSearchParams(serializeState(state).toString()));
     expect(round).toEqual(state);
@@ -60,6 +61,14 @@ describe("urlState round-trip", () => {
 
   it("omits defaults so shared URLs stay short", () => {
     expect(serializeState(DEFAULTS).toString()).toBe("");
+  });
+
+  it("persists the air-quality mode (aqhi is default, so only aqi/off appear)", () => {
+    expect(serializeState({ ...DEFAULTS, airMode: "aqhi" }).get("air")).toBeNull();
+    expect(serializeState({ ...DEFAULTS, airMode: "aqi" }).get("air")).toBe("aqi");
+    expect(serializeState({ ...DEFAULTS, airMode: "off" }).get("air")).toBe("off");
+    expect(parseState(new URLSearchParams("air=off")).airMode).toBe("off");
+    expect(parseState(new URLSearchParams("air=bogus")).airMode).toBe("aqhi");
   });
 });
 

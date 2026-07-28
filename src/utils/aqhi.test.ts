@@ -16,6 +16,18 @@ describe("computeAqhiSeries", () => {
     expect(computeAqhiSeries({ ozone: [0], nitrogen_dioxide: [0], pm2_5: [0] })[0]).toBe(1);
     expect(Number.isNaN(computeAqhiSeries({ ozone: [NaN], nitrogen_dioxide: [NaN], pm2_5: [NaN] })[0])).toBe(true);
   });
+
+  it("uses a centred window — a spike bumps the hour before and after equally (no lag)", () => {
+    // Ozone spike at index 2; a centred 3-h average lifts indices 1 & 3 symmetrically.
+    const s = computeAqhiSeries({
+      ozone: [10, 10, 200, 10, 10],
+      nitrogen_dioxide: [5, 5, 5, 5, 5],
+      pm2_5: [3, 3, 3, 3, 3],
+    });
+    expect(s[1]).toBeGreaterThan(s[0]); // raised the hour BEFORE the spike (trailing can't)
+    expect(s[1]).toBe(s[3]); // symmetric around the spike, not shifted later
+    expect(s[4]).toBe(s[0]); // two hours after is back to baseline
+  });
 });
 
 describe("aqhiCategory", () => {

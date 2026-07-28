@@ -2,8 +2,11 @@ import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { CurrentConditions } from "./CurrentConditions";
 import { Meteogram } from "./Meteogram";
 import { meteogramLegend } from "./meteogramOption";
+import { AXIS_GUTTER, AXIS_GUTTER_RIGHT_MOBILE } from "./meteogramLayout";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { AirQualityPanel } from "./AirQualityPanel";
 import { AirPanelSkeleton, DashboardSkeleton, RadarSkeleton } from "./Skeletons";
+import type { AirMode } from "../api/airQualityGrid";
 import { useDashboardState } from "../hooks/useUrlState";
 import { useTheme } from "../hooks/useTheme";
 import { chartPalette } from "../theme/palette";
@@ -38,7 +41,6 @@ const RadarView = lazy(() => import("./RadarView"));
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
-const AXIS_GUTTER = 56; // matches the ECharts grid inset (left/right)
 const DAY_MS = 86_400_000;
 const ARROW_TWEEN_MS = 240;
 // Narrow screens show fewer days so each stays at least this wide (readable tiles).
@@ -47,6 +49,10 @@ const MIN_DAY_PX = 48;
 export function Dashboard({ place }: { place: Place }) {
   const { state, ...controls } = useDashboardState();
   const { theme } = useTheme();
+  // On mobile the chart's right inset shrinks (right-axis labels are hidden), so the
+  // plot is wider — pan/day-fit math must use the same asymmetric gutters.
+  const compact = useMediaQuery("(max-width: 640px)");
+  const rightGutter = compact ? AXIS_GUTTER_RIGHT_MOBILE : AXIS_GUTTER;
   const animRef = useRef<HTMLDivElement | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
   const [chartWidth, setChartWidth] = useState(0);
@@ -92,7 +98,7 @@ export function Dashboard({ place }: { place: Place }) {
   // Cap the visible days so each column stays at least MIN_DAY_PX wide — a thin
   // screen shows fewer days rather than squeezing them illegibly. Before the chart
   // is measured (chartWidth 0) we fall back to the requested count.
-  const plotW = chartWidth - 2 * AXIS_GUTTER;
+  const plotW = chartWidth - AXIS_GUTTER - rightGutter;
   const maxDays = plotW > 0 ? Math.max(1, Math.floor(plotW / MIN_DAY_PX)) : state.days;
   const windowDays = Math.min(state.days, maxDays);
   const ciEnabled = state.ci;
@@ -213,6 +219,21 @@ export function Dashboard({ place }: { place: Place }) {
     return map;
   }, [aqhi, airQ.data]);
 
+  // Peak US AQI per calendar day, for the day popups when the graph shows AQI.
+  const dailyAqi = useMemo(() => {
+    const map = new Map<string, number>();
+    if (!airQ.data) return map;
+    const { time: t, us_aqi: s } = airQ.data.hourly;
+    for (let i = 0; i < t.length; i++) {
+      const v = s[i];
+      if (v == null || !Number.isFinite(v)) continue;
+      const day = t[i].slice(0, 10);
+      const prev = map.get(day);
+      if (prev == null || v > prev) map.set(day, v);
+    }
+    return map;
+  }, [airQ.data]);
+
   // The current weather day (2am → 2am) that contains "now", for the today-panel
   // graph. Before 2am the day belongs to the previous calendar date. Uses the
   // 15-minute grid when it covers the day, else falls back to hourly.
@@ -253,16 +274,32 @@ export function Dashboard({ place }: { place: Place }) {
     return aligned.some((v) => v != null) ? aligned : undefined;
   }, [airEnabled, aqhi, airQ.data, chartHourly]);
 
+  // Same, for US AQI. The graph shows whichever index the toggle selects.
+  const aqiWindow = useMemo(() => {
+    if (!airEnabled || !airQ.data || !chartHourly) return undefined;
+    const aligned = interpNullable(airQ.data.hourly.time, airQ.data.hourly.us_aqi, chartHourly.time);
+    return aligned.some((v) => v != null) ? aligned : undefined;
+  }, [airEnabled, airQ.data, chartHourly]);
+
+  // The graph shows air quality only when the toggle isn't "off"; `airIndex` is the
+  // chosen index for colouring/labels while it's on.
+  const airMode = state.airMode;
+  const airShown = airMode !== "off";
+  const airIndex: AirMode = airMode === "aqi" ? "aqi" : "aqhi";
+  const airWindow = airShown ? (airMode === "aqi" ? aqiWindow : aqhiWindow) : undefined;
+  const dailyAir = airMode === "aqi" ? dailyAqi : dailyAqhi;
+
   const legend = useMemo(
-    () => meteogramLegend({ panels: state.panels, palette: chartPalette(theme), hasAir: !!aqhiWindow }),
-    [state.panels, theme, aqhiWindow],
+    () => meteogramLegend({ panels: state.panels, palette: chartPalette(theme) }),
+    [state.panels, theme],
   );
   // A panel is drawn only while at least one of its lines is shown (the legend is
   // now the only control — the settings chips are gone), and air needs its data.
   const chartPanels = state.panels.filter((p) => {
     if (p === "precip") return !hidden.has("Precipitation") || !hidden.has("Chance of precip");
     if (p === "atmo") return !hidden.has("Cloud cover") || !hidden.has("Humidity") || !hidden.has("Pressure");
-    if (p === "air") return !!aqhiWindow && !hidden.has("Air quality");
+    // Air panel shows whenever the toggle is on (even with no data — the axis stays).
+    if (p === "air") return airShown;
     return true;
   });
 
@@ -305,7 +342,7 @@ export function Dashboard({ place }: { place: Place }) {
     const el = animRef.current;
     const t = chartHourly?.time ?? [];
     const n = t.length;
-    const plotW = (el?.offsetWidth ?? 0) - 2 * AXIS_GUTTER;
+    const plotW = (el?.offsetWidth ?? 0) - AXIS_GUTTER - rightGutter;
     if (n < 2 || plotW <= 0) return null;
     const stepMin = (parseLocal(t[1]).getTime() - parseLocal(t[0]).getTime()) / 60000;
     const perDay = stepMin > 0 ? 1440 / stepMin : 24;
@@ -463,8 +500,9 @@ export function Dashboard({ place }: { place: Place }) {
                   daily={windowSummaries}
                   todayKey={todayKey}
                   hidden={[...hidden]}
-                  aqhi={aqhiWindow}
-                  dailyAqhi={dailyAqhi}
+                  air={airWindow}
+                  airIndex={airIndex}
+                  dailyAir={dailyAir}
                 />
               ) : (
                 emptyState
@@ -507,6 +545,51 @@ export function Dashboard({ place }: { place: Place }) {
                 </button>
               );
             })}
+            <div className="legend-item legend-air-tri" role="group" aria-label="Air quality">
+              {/* Clicking the words cycles off → AQHI → AQI → off; clicking an index
+                  name jumps straight to that mode, overriding the cycle. */}
+              <button
+                type="button"
+                className="legend-air-tri__toggle"
+                onClick={() =>
+                  controls.setAirMode(airMode === "off" ? "aqhi" : airMode === "aqhi" ? "aqi" : "off")
+                }
+                title={
+                  airMode === "off"
+                    ? "Air quality: off. Click to show AQHI (Canada's Air Quality Health Index)."
+                    : airMode === "aqhi"
+                      ? "Air quality: showing AQHI (Air Quality Health Index). Click to switch to US AQI."
+                      : "Air quality: showing US AQI. Click to turn the air-quality panel off."
+                }
+              >
+                {/* Filled = on, hollow = off — no checkmark, matching the series swatches. */}
+                <span className={"legend-air-tri__box" + (airShown ? " is-on" : "")} aria-hidden="true" />
+                Air quality
+              </button>
+              <span className="legend-air-tri__idx">
+                {" ("}
+                <button
+                  type="button"
+                  className={"air-idx air-idx--btn" + (airMode === "aqhi" ? " air-idx--on" : "")}
+                  aria-pressed={airMode === "aqhi"}
+                  onClick={() => controls.setAirMode("aqhi")}
+                  title="Show AQHI (Canada's Air Quality Health Index) on the graph."
+                >
+                  AQHI
+                </button>
+                {" / "}
+                <button
+                  type="button"
+                  className={"air-idx air-idx--btn" + (airMode === "aqi" ? " air-idx--on" : "")}
+                  aria-pressed={airMode === "aqi"}
+                  onClick={() => controls.setAirMode("aqi")}
+                  title="Show US AQI on the graph."
+                >
+                  AQI
+                </button>
+                {")"}
+              </span>
+            </div>
           </div>
         ) : null}
 

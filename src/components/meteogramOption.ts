@@ -12,17 +12,28 @@ import { cToDisplay, PRECIP_UNIT, tempUnit, type Units } from "../utils/units";
 import { moistAirEnthalpyPerVolume, wetBulbTemperature } from "../utils/psychro";
 import { formatClock, formatDayShort, formatTime, parseLocal } from "../utils/format";
 import { dayShadeMarkArea } from "./meteogramShading";
-import { computeHorizontalLayout, TEMP_HEADROOM } from "./meteogramLayout";
-import { aqhiCategory } from "../utils/aqhi";
+import { AXIS_GUTTER, AXIS_GUTTER_RIGHT_MOBILE, computeHorizontalLayout, TEMP_HEADROOM } from "./meteogramLayout";
+import { AQI_LEGEND, AQHI_LEGEND, type AirMode } from "../api/airQualityGrid";
 import type { HourlyPoint } from "../utils/series";
 
-// AQHI risk-band colours for the integrated air-quality panel.
-const AQHI_BANDS = {
-  low: aqhiCategory(2).color,
-  moderate: aqhiCategory(5).color,
-  high: aqhiCategory(8).color,
-  veryHigh: aqhiCategory(11).color,
-};
+// Representative legend/tooltip colour per index (a mid-severity band). The line
+// itself is re-coloured per value by the visualMap; these are for the swatch.
+const AIR_REP: Record<AirMode, string> = { aqhi: AQHI_LEGEND[1].color, aqi: AQI_LEGEND[2].color };
+
+/** Piecewise visualMap bands for an index — the same colours the map overlay uses. */
+function airVisualPieces(bands: { max: number; color: string }[]) {
+  let prev = 0;
+  return bands.map((b, i) => {
+    const piece =
+      i === 0
+        ? { lte: b.max, color: b.color }
+        : i === bands.length - 1
+          ? { gt: prev, color: b.color }
+          : { gt: prev, lte: b.max, color: b.color };
+    prev = b.max;
+    return piece;
+  });
+}
 
 /**
  * The single source of truth for each chart line's colour, keyed by series name.
@@ -33,7 +44,7 @@ const AQHI_BANDS = {
  * per-value by the visualMap on the chart; this is its representative colour for
  * the legend and the tooltip fallback.
  */
-export function seriesColor(palette: ChartPalette): Record<string, string> {
+export function seriesColor(palette: ChartPalette, airIndex: AirMode = "aqhi"): Record<string, string> {
   return {
     Temperature: palette.temp,
     "Feels like": palette.feels,
@@ -45,7 +56,7 @@ export function seriesColor(palette: ChartPalette): Record<string, string> {
     "Cloud cover": palette.cloud,
     Humidity: palette.humidity,
     Pressure: palette.pressure,
-    "Air quality": AQHI_BANDS.moderate,
+    "Air quality": AIR_REP[airIndex],
   };
 }
 
@@ -66,18 +77,29 @@ export interface MeteogramInput {
   getHovered?: () => string | null;
   /** Series names hidden via the legend (their lines are not drawn). */
   hidden?: string[];
-  /** AQHI per hour, aligned to hourly.time, for the integrated air-quality panel. */
-  aqhi?: (number | null)[];
+  /** Air-quality value per hour (of the active index), aligned to hourly.time. */
+  air?: (number | null)[];
+  /** Which index `air` holds — drives its scale, colours, and labels. */
+  airIndex?: AirMode;
+  /** Compact (mobile) layout: drop units from the %/pressure axis labels to declutter. */
+  compact?: boolean;
 }
 
 const round1 = (n: number) => (Number.isFinite(n) ? Math.round(n * 10) / 10 : NaN);
 
 export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   const { hourly, palette, units, series, panels, tempBand, precipBand, nowIso } = input;
+  const airIndex: AirMode = input.airIndex ?? "aqhi";
+  // Mobile: hide every right-axis label and shrink the right inset so the plot uses
+  // the space. The left gutter stays (it holds the axis titles + numbers).
+  const compact = input.compact ?? false;
+  const rightInset = compact ? AXIS_GUTTER_RIGHT_MOBILE : AXIS_GUTTER;
+  /** Right-axis label config: hidden on mobile, else the given desktop config. */
+  const rightLabel = (desktop: object) => (compact ? { show: false } : desktop);
   const time = hourly.time;
   const hiddenSet = new Set(input.hidden ?? []);
   const isHidden = (name: string) => hiddenSet.has(name);
-  const colors = seriesColor(palette);
+  const colors = seriesColor(palette, airIndex);
 
   // Split point between "past" and "forecast": the last grid index at or before
   // the real current time. Index-based so it works at any resolution (hourly or
@@ -95,16 +117,18 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
 
   const showPrecip = panels.includes("precip");
   const showAtmo = panels.includes("atmo");
-  const showAir = panels.includes("air") && Array.isArray(input.aqhi);
+  // The air panel is laid out whenever it's toggled on (so the axis shows even with
+  // no data); the LINE is only drawn when there's actually data for the window.
+  const showAir = panels.includes("air");
+  const hasAirData = showAir && Array.isArray(input.air) && input.air.some((v) => v != null && Number.isFinite(v));
 
   // ---- Panel layout (percentages) --------------------------------------
-  // The air panel is only laid out when it has data to draw.
   const layoutPanels = showAir ? panels : panels.filter((p) => p !== "air");
   const { panelKeys: panelList, grids: gridBoxes } = computeHorizontalLayout(layoutPanels);
 
   const grids: EChartsOption["grid"] = gridBoxes.map((g) => ({
-    left: 56,
-    right: 56,
+    left: AXIS_GUTTER,
+    right: rightInset,
     top: `${g.top}%`,
     height: `${g.height}%`,
   }));
@@ -194,32 +218,43 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   if (series.includes("enthalpy")) {
     pushY("enthalpy", {
       ...yBase(gridIndex.temp),
-      name: "kJ/m³",
+      name: compact ? "" : "kJ/m³",
       position: "right",
       scale: true,
       splitLine: { show: false },
       ...axisName(palette.enthalpy, true),
-      axisLabel: { color: palette.enthalpy },
+      axisLabel: rightLabel({ color: palette.enthalpy }),
     });
   }
+  // The chance-of-precip and cloud/humidity axes stay fixed at 0–100 regardless of
+  // data. On mobile the LEFT %-axis (cloud/humidity) drops its "%" unit; the RIGHT
+  // axes (chance-of-precip, pressure) hide their labels entirely (see rightLabel).
+  const pctFmt = compact ? "{value}" : "{value}%";
   if (showPrecip) {
     // Hide the 0 / 0% baseline labels (min is 0 on both).
     pushY("precip", { ...yBase(gridIndex.precip), name: PRECIP_UNIT, min: 0, ...axisName(palette.axisLabel), axisLabel: { color: palette.axisLabel, showMinLabel: false } });
-    pushY("prob", { ...yBase(gridIndex.precip), min: 0, max: 100, position: "right", splitLine: { show: false }, axisLabel: { color: palette.precipProb, formatter: "{value}%", showMinLabel: false } });
+    pushY("prob", { ...yBase(gridIndex.precip), min: 0, max: 100, position: "right", splitLine: { show: false }, axisLabel: rightLabel({ color: palette.precipProb, formatter: "{value}%", showMinLabel: false }) });
   }
   if (showAtmo) {
-    pushY("pct", { ...yBase(gridIndex.atmo), min: 0, max: 100, axisLabel: { color: palette.axisLabel, formatter: "{value}%", showMinLabel: false } });
-    pushY("pressure", { ...yBase(gridIndex.atmo), position: "right", scale: true, splitLine: { show: false }, axisLabel: { color: palette.pressure, formatter: "{value}" } });
+    pushY("pct", { ...yBase(gridIndex.atmo), min: 0, max: 100, axisLabel: { color: palette.axisLabel, formatter: pctFmt, showMinLabel: false } });
+    pushY("pressure", { ...yBase(gridIndex.atmo), position: "right", scale: true, splitLine: { show: false }, axisLabel: rightLabel({ color: palette.pressure, formatter: "{value}" }) });
   }
-  const aqhiFinite = showAir ? (input.aqhi!.filter((v) => v != null && Number.isFinite(v)) as number[]) : [];
-  const aqhiMax = Math.min(11, Math.max(4, Math.ceil(Math.max(1, ...aqhiFinite)) + 1));
+  const airFinite = hasAirData ? (input.air!.filter((v) => v != null && Number.isFinite(v)) as number[]) : [];
+  const airMax =
+    airFinite.length === 0
+      ? airIndex === "aqi"
+        ? 100 // no data → sensible default bounds (0–100 AQI, 0–10 AQHI)
+        : 10
+      : airIndex === "aqi"
+        ? Math.min(500, Math.max(50, Math.ceil(Math.max(...airFinite) / 25) * 25))
+        : Math.min(11, Math.max(4, Math.ceil(Math.max(...airFinite)) + 1));
   if (showAir) {
-    pushY("aqhi", {
+    pushY("air", {
       ...yBase(gridIndex.air),
-      name: "AQHI",
+      name: airIndex === "aqi" ? "AQI" : "AQHI",
       min: 0,
-      max: aqhiMax,
-      interval: Math.max(1, Math.round(aqhiMax / 4)),
+      max: airMax,
+      interval: Math.max(1, Math.round(airMax / 4)),
       ...axisName(palette.axisLabel),
     });
   }
@@ -425,12 +460,13 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     }
   }
 
-  // Air-quality panel: AQHI line coloured by risk band (via visualMap below).
-  let aqhiSeriesIndices: number[] = [];
-  if (showAir && !isHidden("Air quality")) {
+  // Air-quality panel: the index line coloured by risk band (via visualMap below).
+  // Only drawn when there's data; the panel/axis alone shows otherwise.
+  let airSeriesIndices: number[] = [];
+  if (hasAirData && !isHidden("Air quality")) {
     firstOfPanel.add(gridIndex.air);
-    const aqhiData = (input.aqhi as (number | null)[]).map((v) => (v == null ? NaN : v));
-    aqhiSeriesIndices = pushLine("Air quality", aqhiData, gridIndex.air, yIdx.aqhi, 2, {
+    const airData = (input.air as (number | null)[]).map((v) => (v == null ? NaN : v));
+    airSeriesIndices = pushLine("Air quality", airData, gridIndex.air, yIdx.air, 2, {
       areaStyle: { opacity: 0.14 },
     });
   }
@@ -441,7 +477,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     const yForGrid: Record<number, number> = { [gridIndex.temp]: yIdx.temp };
     if (showPrecip) yForGrid[gridIndex.precip] = yIdx.precip;
     if (showAtmo) yForGrid[gridIndex.atmo] = yIdx.pct;
-    if (showAir) yForGrid[gridIndex.air] = yIdx.aqhi;
+    if (showAir) yForGrid[gridIndex.air] = yIdx.air;
     panelList.forEach((_p, gi) => {
       seriesList.push({
         name: "_now",
@@ -475,7 +511,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     "Cloud cover": "%",
     Humidity: "%",
     Pressure: " hPa",
-    "Air quality": " AQHI",
+    "Air quality": airIndex === "aqi" ? " AQI" : " AQHI",
   };
 
   // Canonical row order for the tooltip (same as the series/legend order), so the
@@ -540,20 +576,16 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     },
   };
 
-  // Colour the AQHI line(s) by risk band (past + forecast segments).
+  // Colour the air-quality line(s) by risk band — the same band colours the map
+  // overlay uses for this index (past + forecast segments).
   const visualMap =
-    aqhiSeriesIndices.length > 0
+    airSeriesIndices.length > 0
       ? {
           show: false,
           type: "piecewise" as const,
           dimension: 1,
-          seriesIndex: aqhiSeriesIndices,
-          pieces: [
-            { lte: 3, color: AQHI_BANDS.low },
-            { gt: 3, lte: 6, color: AQHI_BANDS.moderate },
-            { gt: 6, lte: 10, color: AQHI_BANDS.high },
-            { gt: 10, color: AQHI_BANDS.veryHigh },
-          ],
+          seriesIndex: airSeriesIndices,
+          pieces: airVisualPieces(airIndex === "aqi" ? AQI_LEGEND : AQHI_LEGEND),
         }
       : undefined;
 
@@ -584,11 +616,7 @@ export type LegendEntry = { name: string; color: string; help: string } & (
  * shows as an empty box); panel sub-lines appear only when their panel is on. The
  * `help` text is shown on legend hover — it replaces the old settings-menu chips.
  */
-export function meteogramLegend(input: {
-  panels: PanelKey[];
-  palette: ChartPalette;
-  hasAir?: boolean;
-}): LegendEntry[] {
+export function meteogramLegend(input: { panels: PanelKey[]; palette: ChartPalette }): LegendEntry[] {
   const { panels } = input;
   const colors = seriesColor(input.palette);
   const out: LegendEntry[] = [
@@ -607,8 +635,7 @@ export function meteogramLegend(input: {
     out.push({ name: "Humidity", color: colors.Humidity, kind: "line", help: "Relative humidity (%)." });
     out.push({ name: "Pressure", color: colors.Pressure, kind: "line", help: "Surface air pressure (hPa)." });
   }
-  if (panels.includes("air") && input.hasAir) {
-    out.push({ name: "Air quality", color: colors["Air quality"], kind: "line", help: "Canada's Air Quality Health Index (AQHI, 1–10+), coloured by health-risk band." });
-  }
+  // Air quality is controlled by a dedicated three-way toggle (off / AQHI / AQI),
+  // not a legend line, so it isn't listed here.
   return out;
 }

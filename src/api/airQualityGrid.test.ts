@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   aqiAlpha,
   aqiColor,
+  aqhiAlpha,
+  aqhiColor,
   aqiGridPoints,
+  airFieldColor,
+  airFieldAlpha,
   fetchAqiGrid,
   sampleAqiGridAt,
   AQI_GRID_N,
@@ -24,18 +28,39 @@ describe("aqiGridPoints", () => {
   });
 });
 
-describe("aqiColor", () => {
-  it("anchors on the EPA category colours", () => {
-    expect(aqiColor(0)).toEqual([0, 228, 0]); // Good
-    expect(aqiColor(100)).toEqual([255, 255, 0]); // Moderate
-    expect(aqiColor(200)).toEqual([255, 0, 0]); // Unhealthy
+describe("unified air-quality colour scheme", () => {
+  it("uses the SAME ramp for AQI and AQHI (identical colours at the shared endpoints)", () => {
+    // Good (AQI 0) and Low (AQHI 1) both sit at the ramp's green start; Hazardous
+    // (AQI 500) and Very high (AQHI 11) both at its umber end.
+    expect(aqiColor(0)).toEqual(aqhiColor(1)); // both green
+    expect(aqiColor(500)).toEqual(aqhiColor(11)); // both umber
+    // Green at the low end, dark red-brown (umber) at the top.
+    const good = aqiColor(0);
+    expect(good[1]).toBeGreaterThan(good[0]); // green > red
+    const worst = aqhiColor(11);
+    expect(worst[0]).toBeGreaterThan(worst[1]); // red > green (dark)
+    expect(worst[0]).toBeLessThan(160); // umber is dark
   });
 
-  it("interpolates between anchors and clamps beyond the top stop", () => {
-    const mid = aqiColor(75); // halfway 50→100 (green→yellow)
-    expect(mid[0]).toBeGreaterThan(0);
-    expect(mid[0]).toBeLessThan(255);
-    expect(aqiColor(9999)).toEqual([126, 0, 35]); // Hazardous cap
+  it("progresses monotonically from green toward red as severity rises", () => {
+    expect(aqiColor(25)[1]).toBeGreaterThan(aqiColor(300)[1]); // green fades out
+    expect(aqhiColor(2)[1]).toBeGreaterThan(aqhiColor(10)[1]);
+    expect(aqiColor(9999)).toEqual(aqiColor(500)); // clamps at the top
+  });
+
+  it("is transparent at low risk (≤3) and fades in above", () => {
+    expect(aqhiAlpha(1)).toBe(0);
+    expect(aqhiAlpha(3)).toBe(0);
+    expect(aqhiAlpha(5)).toBeCloseTo(0.6);
+    expect(aqhiAlpha(4)).toBeGreaterThan(0);
+    expect(aqhiAlpha(4)).toBeLessThan(0.6);
+  });
+
+  it("airField* dispatch on the mode", () => {
+    expect(airFieldColor(4, "aqhi")).toEqual(aqhiColor(4));
+    expect(airFieldColor(100, "aqi")).toEqual(aqiColor(100));
+    expect(airFieldAlpha(5, "aqhi")).toBe(aqhiAlpha(5));
+    expect(airFieldAlpha(75, "aqi")).toBe(aqiAlpha(75));
   });
 });
 
@@ -115,7 +140,7 @@ describe("fetchAqiGrid", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const grid = await fetchAqiGrid({ south: 43, west: -80, north: 46, east: -75 });
+    const grid = await fetchAqiGrid({ south: 43, west: -80, north: 46, east: -75 }, "aqi");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(grid.times).toEqual([1000, 2000]);
     expect(grid.points).toEqual([
@@ -129,8 +154,32 @@ describe("fetchAqiGrid", () => {
       ok: true,
       json: async () => ({ latitude: 1, longitude: 2, hourly: { time: [500], us_aqi: [30] } }),
     }));
-    const grid = await fetchAqiGrid({ south: 0, west: 0, north: 1, east: 1 });
+    const grid = await fetchAqiGrid({ south: 0, west: 0, north: 1, east: 1 }, "aqi");
     expect(grid.times).toEqual([500]);
     expect(grid.points).toEqual([{ lat: 1, lon: 2, values: [30] }]);
+  });
+
+  it("in AQHI mode requests the pollutants and computes the index per point", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(new URL(url).searchParams.get("hourly")).toBe("pm2_5,ozone,nitrogen_dioxide");
+      return {
+        ok: true,
+        json: async () => [
+          {
+            latitude: 43.7,
+            longitude: -79.4,
+            hourly: { time: [1000, 2000], pm2_5: [8, 8], ozone: [40, 40], nitrogen_dioxide: [12, 12] },
+          },
+        ],
+      } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const grid = await fetchAqiGrid({ south: 43, west: -80, north: 46, east: -75 }, "aqhi");
+    expect(grid.times).toEqual([1000, 2000]);
+    // Computed AQHI values are small positive integers (≥1), not the raw pollutants.
+    const v = grid.points[0].values;
+    expect(v).toHaveLength(2);
+    expect(v[0]).toBeGreaterThanOrEqual(1);
+    expect(v[0]).toBeLessThan(10);
   });
 });

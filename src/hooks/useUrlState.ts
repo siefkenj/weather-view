@@ -6,6 +6,7 @@
 
 import { useAppDispatch, useAppSelector } from "../store";
 import {
+  setAirMode,
   setCi,
   setDays,
   setExtraModels,
@@ -16,10 +17,10 @@ import {
   togglePanel,
   toggleSeries,
 } from "../store/viewSlice";
-import type { DashboardState, PanelKey, SeriesKey } from "../store/urlState";
+import type { AirPanelMode, DashboardState, PanelKey, SeriesKey } from "../store/urlState";
 import type { Units } from "../utils/units";
 
-export type { DashboardState, PanelKey, SeriesKey } from "../store/urlState";
+export type { AirPanelMode, DashboardState, PanelKey, SeriesKey } from "../store/urlState";
 export {
   ALL_SERIES,
   ALL_PANELS,
@@ -44,5 +45,6 @@ export function useDashboardState() {
     setCi: (ci: boolean) => dispatch(setCi(ci)),
     setUnits: (units: Units) => dispatch(setUnits(units)),
     setExtraModels: (extraModels: string[]) => dispatch(setExtraModels(extraModels)),
+    setAirMode: (mode: AirPanelMode) => dispatch(setAirMode(mode)),
   };
 }
