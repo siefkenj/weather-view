@@ -4,6 +4,7 @@ import { describeWeather } from "../api/weatherCode";
 import { WeatherIcon } from "./WeatherIcon";
 import { LocationSearch } from "./LocationSearch";
 import { SettingsMenu } from "./SettingsMenu";
+import { StatusBar } from "./StatusBar";
 import { formatTemp, type Units } from "../utils/units";
 import { dayKey, formatTime, parseLocal } from "../utils/format";
 import { aqhiCategory, formatAqhi } from "../utils/aqhi";
@@ -46,6 +47,7 @@ export function CurrentConditions({ place, current, today, units, aqhi, mini }: 
 
   return (
     <section className="current" aria-label="Current conditions">
+      <StatusBar />
       <div className="current__actions">
         <LocationSearch onSelect={goToPlace} />
         <SettingsMenu />

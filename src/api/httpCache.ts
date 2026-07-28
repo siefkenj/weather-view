@@ -1,0 +1,172 @@
+// localStorage-backed response cache for the JSON APIs, with two independent bounds:
+//
+//   • FRESHNESS by clock hour — an entry is only served *without a refetch* if it was
+//     fetched during the current clock hour. Open-Meteo's forecast / air-quality /
+//     wind windows are relative to "now" and roll hourly (the hours that were forecast
+//     become observations), so once the hour changes we refetch and pick up the
+//     accurate historical data. This is what keeps the cache honest as time passes.
+//
+//   • HARD EXPIRY after ~2 days — older entries are dropped entirely. Until then a
+//     non-fresh entry is still handed back as a *stale fallback* (see http.ts) when the
+//     network is unavailable or rate-limited, so the user keeps seeing something.
+//
+// A manual reset (Settings → Clear cached data) wipes the whole namespace. All access
+// is best-effort: any storage error (private mode, quota) degrades to "no cache".
+
+const PREFIX = "wv:cache:v1:";
+const HARD_TTL_MS = 2 * 24 * 60 * 60 * 1000; // ~2 days
+const MAX_ENTRIES = 60; // rough bound so grid pans/zooms can't fill the quota
+
+interface Entry<T> {
+  /** Fetched-at, ms epoch. */
+  at: number;
+  /** Clock-hour bucket at fetch time (Math.floor(at / 1h)). */
+  hour: number;
+  body: T;
+}
+
+function store(): Storage | null {
+  try {
+    return typeof localStorage !== "undefined" ? localStorage : null;
+  } catch {
+    return null; // access itself can throw under strict privacy settings
+  }
+}
+
+const hourBucket = (ms: number): number => Math.floor(ms / 3_600_000);
+
+/** Collect the keys in our namespace (snapshotting first, so callers can remove safely). */
+function namespaceKeys(s: Storage): string[] {
+  const keys: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+    const key = s.key(i);
+    if (key && key.startsWith(PREFIX)) keys.push(key);
+  }
+  return keys;
+}
+
+function entryAt(s: Storage, key: string): number {
+  try {
+    return (JSON.parse(s.getItem(key) ?? "{}") as Entry<unknown>).at ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export interface CacheHit<T> {
+  body: T;
+  /** Same clock hour as now → safe to serve without a refetch. */
+  fresh: boolean;
+}
+
+/** Look up a URL. Returns the entry (with a freshness flag) if present and within the
+ *  hard TTL, else null. A non-fresh hit is still returned — as a stale fallback. */
+export function readCache<T>(url: string): CacheHit<T> | null {
+  const s = store();
+  if (!s) return null;
+  const key = PREFIX + url;
+  let raw: string | null;
+  try {
+    raw = s.getItem(key);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  let entry: Entry<T> | null;
+  try {
+    entry = JSON.parse(raw) as Entry<T>;
+  } catch {
+    return null;
+  }
+  const now = Date.now();
+  if (!entry || typeof entry.at !== "number" || now - entry.at > HARD_TTL_MS) {
+    try {
+      s.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+  return { body: entry.body, fresh: entry.hour === hourBucket(now) };
+}
+
+/** Store a response, pruning expired (and, on quota failure, oldest) entries. */
+export function writeCache<T>(url: string, body: T): void {
+  const s = store();
+  if (!s) return;
+  const now = Date.now();
+  const payload = JSON.stringify({ at: now, hour: hourBucket(now), body } satisfies Entry<T>);
+  try {
+    s.setItem(PREFIX + url, payload);
+  } catch {
+    pruneCache(true); // quota exceeded — evict aggressively and retry once
+    try {
+      s.setItem(PREFIX + url, payload);
+    } catch {
+      /* give up — caching is best-effort */
+    }
+  }
+}
+
+/** Drop hard-expired entries; if `aggressive`, also trim to MAX_ENTRIES (oldest first). */
+export function pruneCache(aggressive: boolean): void {
+  const s = store();
+  if (!s) return;
+  const now = Date.now();
+  const live: { key: string; at: number }[] = [];
+  for (const key of namespaceKeys(s)) {
+    const at = entryAt(s, key);
+    if (at === 0 || now - at > HARD_TTL_MS) {
+      try {
+        s.removeItem(key);
+      } catch {
+        /* ignore */
+      }
+    } else {
+      live.push({ key, at });
+    }
+  }
+  if (aggressive && live.length > MAX_ENTRIES) {
+    live.sort((a, b) => a.at - b.at); // oldest first
+    for (const { key } of live.slice(0, live.length - MAX_ENTRIES)) {
+      try {
+        s.removeItem(key);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+export interface CacheStats {
+  count: number;
+  bytes: number;
+}
+
+/** Count + approximate byte size of the cached entries (for the settings panel). */
+export function cacheStats(): CacheStats {
+  const s = store();
+  if (!s) return { count: 0, bytes: 0 };
+  let count = 0;
+  let bytes = 0;
+  for (const key of namespaceKeys(s)) {
+    count++;
+    bytes += key.length + (s.getItem(key)?.length ?? 0);
+  }
+  return { count, bytes };
+}
+
+/** Wipe the whole cache namespace. Returns how many entries were removed. */
+export function clearCache(): number {
+  const s = store();
+  if (!s) return 0;
+  const keys = namespaceKeys(s);
+  for (const key of keys) {
+    try {
+      s.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+  }
+  return keys.length;
+}

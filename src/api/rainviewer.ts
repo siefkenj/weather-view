@@ -4,6 +4,8 @@
 // frame's `path` builds an XYZ tile template that Leaflet consumes directly.
 // Docs: https://www.rainviewer.com/api/weather-maps-api.html
 
+import { fetchJson } from "./http";
+
 const WEATHER_MAPS_URL = "https://api.rainviewer.com/public/weather-maps.json";
 
 export interface RadarFrame {
@@ -37,11 +39,8 @@ interface RawMaps {
 }
 
 export async function fetchRadarFrames(signal?: AbortSignal): Promise<RadarIndex> {
-  const res = await fetch(WEATHER_MAPS_URL, { signal });
-  if (!res.ok) {
-    throw new Error(`RainViewer request failed: ${res.status} ${res.statusText}`);
-  }
-  const raw = (await res.json()) as RawMaps;
+  // Not cached: the frame index must stay current (it polls every few minutes).
+  const raw = await fetchJson<RawMaps>(WEATHER_MAPS_URL, { label: "radar", signal });
   const past = (raw.radar?.past ?? []).map((f) => ({ time: f.time, path: f.path, nowcast: false }));
   const nowcast = (raw.radar?.nowcast ?? []).map((f) => ({ time: f.time, path: f.path, nowcast: true }));
   return {

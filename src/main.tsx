@@ -8,21 +8,25 @@ import { store } from "./store";
 import { DEFAULT_PLACE, placeToSlug } from "./utils/place";
 import "./index.css";
 
-const router = createHashRouter([
-  {
-    path: "/",
-    element: <App />,
-    children: [
-      { index: true, element: <Navigate to={`/${placeToSlug(DEFAULT_PLACE)}`} replace /> },
-      { path: ":slug", element: <LocationPage /> },
-    ],
-  },
-]);
+const router = createHashRouter(
+  [
+    {
+      path: "/",
+      element: <App />,
+      children: [
+        { index: true, element: <Navigate to={`/${placeToSlug(DEFAULT_PLACE)}`} replace /> },
+        { path: ":slug", element: <LocationPage /> },
+      ],
+    },
+  ],
+  // Opt into the v7 data-router behaviour now to silence its future-flag warning.
+  { future: { v7_relativeSplatPath: true } },
+);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <Provider store={store}>
-      <RouterProvider router={router} />
+      <RouterProvider router={router} future={{ v7_startTransition: true }} />
     </Provider>
   </StrictMode>,
 );

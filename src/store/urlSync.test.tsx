@@ -36,7 +36,10 @@ function renderAt(path: string) {
   });
   render(
     <Provider store={store}>
-      <MemoryRouter initialEntries={[path]}>
+      <MemoryRouter
+        initialEntries={[path]}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
         <Harness />
       </MemoryRouter>
     </Provider>,

@@ -8,6 +8,7 @@
 // thin strip (or nothing), not a whole fresh grid. Open-Meteo's forecast API takes
 // many coordinates in one request, so a cell batch is a single call.
 
+import { fetchJson } from "./http";
 import type { LatLonBounds } from "./airQualityGrid";
 
 const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
@@ -141,9 +142,11 @@ export async function fetchWindPoints(
   url.searchParams.set("past_days", "1");
   url.searchParams.set("forecast_days", "2");
   url.searchParams.set("wind_speed_unit", "kmh");
-  const res = await fetch(url.toString(), { signal });
-  if (!res.ok) throw new Error(`Wind grid request failed: ${res.status} ${res.statusText}`);
-  const body = (await res.json()) as WindLocation | WindLocation[];
+  const body = await fetchJson<WindLocation | WindLocation[]>(url.toString(), {
+    label: "wind",
+    signal,
+    cache: true,
+  });
   const list = Array.isArray(body) ? body : [body];
   const times = list[0]?.hourly?.time ?? [];
   const gridPoints = list.map((loc) => ({

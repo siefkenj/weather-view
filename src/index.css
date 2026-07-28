@@ -1433,3 +1433,127 @@ button {
 .leaflet-control-attribution a {
   color: var(--accent);
 }
+
+/* ---------- Network status (reserved slot, top-left of the banner) ---------- */
+.status-slot {
+  /* Sits in the banner's naturally-empty top-left header strip, symmetric to the
+     search/settings actions on the right. Absolute, so showing a message never
+     reflows the weather content or the daily forecast below — the space is always
+     set aside for it. Intentionally quiet: a small dot + short dim text. */
+  position: absolute;
+  top: 14px;
+  left: max(clamp(12px, 2.4vw, 24px), calc(50vw - 620px));
+  z-index: 2;
+  min-width: 180px;
+  max-width: 33%;
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+  pointer-events: none; /* the empty slot never eats clicks */
+}
+.status-slot__msg {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status-slot__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.status-slot__msg--warn .status-slot__dot {
+  background: #e6a417;
+}
+.status-slot__msg--error .status-slot__dot {
+  background: #de3921;
+}
+.status-slot__x {
+  flex: none;
+  margin-left: 2px;
+  padding: 0 3px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.5;
+  cursor: pointer;
+}
+.status-slot__x:hover {
+  opacity: 1;
+}
+/* Loading uses a calm breathing dot rather than a spinner — far less eye-catching. */
+.status-slot__dot--pulse {
+  background: var(--text-dim);
+  animation: wv-pulse 1.5s ease-in-out infinite;
+}
+@keyframes wv-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-slot__dot--pulse {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+@media (max-width: 640px) {
+  /* Phones: the banner content starts flush top-left (no empty strip), so drop the
+     slot into the flow as a thin line above the content — and only when it has a
+     message, so an idle app keeps a clean top edge. */
+  .status-slot {
+    position: static;
+    order: -1;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    min-height: 0;
+    margin-bottom: 2px;
+  }
+  .status-slot:empty {
+    display: none;
+  }
+}
+
+/* ---------- Settings → Data ---------- */
+.settings__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+.settings__data {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.settings__data-stat {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.btn--sm {
+  margin-top: 0;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

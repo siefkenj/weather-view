@@ -9,6 +9,7 @@
 // field client-side (see components/aqiGridLayer.ts).
 
 import { computeAqhiSeries } from "../utils/aqhi";
+import { fetchJson } from "./http";
 import type { AirMode } from "../utils/airColors";
 
 // The unified air-quality colour scheme (shared by every chart) lives in
@@ -103,9 +104,11 @@ export async function fetchAqiGrid(
   url.searchParams.set("past_days", "1");
   // 2 days of forecast so the timeline's +6 h window is covered even late in the day.
   url.searchParams.set("forecast_days", "2");
-  const res = await fetch(url.toString(), { signal });
-  if (!res.ok) throw new Error(`Air-quality grid request failed: ${res.status} ${res.statusText}`);
-  const body = (await res.json()) as AqLocation | AqLocation[];
+  const body = await fetchJson<AqLocation | AqLocation[]>(url.toString(), {
+    label: "air map",
+    signal,
+    cache: true,
+  });
   const list = Array.isArray(body) ? body : [body];
   const times = list[0]?.hourly?.time ?? [];
   const points = list.map((loc) => ({

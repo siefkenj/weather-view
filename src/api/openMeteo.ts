@@ -2,6 +2,7 @@
 // No API key required; every endpoint sends permissive CORS headers, so these
 // run directly from the browser on GitHub Pages with no proxy.
 
+import { fetchJson } from "./http";
 import type {
   AirQualityResponse,
   EnsembleResponse,
@@ -71,21 +72,6 @@ function buildUrl(base: string, params: Record<string, string | number | undefin
   return url.toString();
 }
 
-async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, { signal });
-  if (!res.ok) {
-    let reason = `${res.status} ${res.statusText}`;
-    try {
-      const body = (await res.json()) as { reason?: string };
-      if (body?.reason) reason = body.reason;
-    } catch {
-      // response was not JSON; keep the status text
-    }
-    throw new Error(`Open-Meteo request failed: ${reason}`);
-  }
-  return (await res.json()) as T;
-}
-
 export interface ForecastParams {
   latitude: number;
   longitude: number;
@@ -115,7 +101,7 @@ export function buildForecastUrl(params: ForecastParams): string {
 }
 
 export function fetchForecast(params: ForecastParams, signal?: AbortSignal): Promise<ForecastResponse> {
-  return fetchJson<ForecastResponse>(buildForecastUrl(params), signal);
+  return fetchJson<ForecastResponse>(buildForecastUrl(params), { label: "forecast", signal, cache: true });
 }
 
 export interface MinutelyParams {
@@ -142,7 +128,7 @@ export function buildMinutelyUrl(params: MinutelyParams): string {
 }
 
 export function fetchMinutely(params: MinutelyParams, signal?: AbortSignal): Promise<MinutelyResponse> {
-  return fetchJson<MinutelyResponse>(buildMinutelyUrl(params), signal);
+  return fetchJson<MinutelyResponse>(buildMinutelyUrl(params), { label: "minutely", signal, cache: true });
 }
 
 export interface EnsembleParams {
@@ -169,7 +155,7 @@ export function buildEnsembleUrl(params: EnsembleParams): string {
 }
 
 export function fetchEnsemble(params: EnsembleParams, signal?: AbortSignal): Promise<EnsembleResponse> {
-  return fetchJson<EnsembleResponse>(buildEnsembleUrl(params), signal);
+  return fetchJson<EnsembleResponse>(buildEnsembleUrl(params), { label: "ensemble", signal, cache: true });
 }
 
 export interface AirQualityParams {
@@ -195,7 +181,11 @@ export function fetchAirQuality(
   params: AirQualityParams,
   signal?: AbortSignal,
 ): Promise<AirQualityResponse> {
-  return fetchJson<AirQualityResponse>(buildAirQualityUrl(params), signal);
+  return fetchJson<AirQualityResponse>(buildAirQualityUrl(params), {
+    label: "air quality",
+    signal,
+    cache: true,
+  });
 }
 
 export function buildGeocodeUrl(name: string, count = 8): string {
@@ -203,5 +193,6 @@ export function buildGeocodeUrl(name: string, count = 8): string {
 }
 
 export function fetchGeocode(name: string, signal?: AbortSignal): Promise<GeocodingResponse> {
-  return fetchJson<GeocodingResponse>(buildGeocodeUrl(name), signal);
+  // Not cached: it's per-keystroke and RTK Query already keeps results for a day.
+  return fetchJson<GeocodingResponse>(buildGeocodeUrl(name), { label: "search", signal });
 }
