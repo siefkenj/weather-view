@@ -30,7 +30,7 @@ const RADAR_OPACITY = 0.72;
 const AQI_REFETCH_MS = 400;
 // Default view spans ~80 km across (fit to the map's shorter axis).
 const DEFAULT_REGION_M = 80_000;
-const FRAME_MS = 500;
+const FRAME_MS = 300;
 const PRELOAD_TIMEOUT_MS = 2500;
 // The scrubbable timeline spans 6 h of history + 6 h of forecast at 10-min steps,
 // anchored at "now". RainViewer only serves ~2 h of radar frames (+ short nowcast),
@@ -181,10 +181,11 @@ export default function RadarView({ place }: { place: Place }) {
   const activeFrame = step?.radarIndex != null ? data?.frames[step.radarIndex] : undefined;
   const activeFrameTime = step?.time ?? null;
 
-  // The contiguous span of the timeline that actually has radar frames, as track
-  // percentages — used to shade the scrubber (radar-available vs overlay-only).
-  const radarBand = useMemo(() => {
-    if (stepCount < 2) return { start: 0, end: 0 };
+  // The contiguous span of the timeline that actually has radar frames, as step
+  // indices [lo, hi]. Drives both the scrubber shading and — when only radar is
+  // shown — the play button's loop bounds.
+  const radarRange = useMemo(() => {
+    if (stepCount < 2) return null;
     let lo = -1;
     let hi = -1;
     timeline.forEach((s, i) => {
@@ -193,13 +194,23 @@ export default function RadarView({ place }: { place: Place }) {
         hi = i;
       }
     });
-    if (lo < 0) return { start: 0, end: 0 };
+    return lo < 0 ? null : { lo, hi };
+  }, [timeline, stepCount]);
+
+  // Same span as track percentages — used to shade the scrubber (radar vs overlay-only).
+  const radarBand = useMemo(() => {
+    if (stepCount < 2 || !radarRange) return { start: 0, end: 0 };
     const half = 0.5 / (stepCount - 1);
     return {
-      start: Math.max(0, lo / (stepCount - 1) - half) * 100,
-      end: Math.min(1, hi / (stepCount - 1) + half) * 100,
+      start: Math.max(0, radarRange.lo / (stepCount - 1) - half) * 100,
+      end: Math.min(1, radarRange.hi / (stepCount - 1) + half) * 100,
     };
-  }, [timeline, stepCount]);
+  }, [radarRange, stepCount]);
+
+  // When ONLY radar is shown (no air-quality or wind overlay), the play button loops
+  // just the radar-available section instead of the whole 12 h timeline. The slider is
+  // unchanged — the user can still scrub anywhere; only the loop bounds move.
+  const onlyRadar = radarOn && airMode === "off" && !windOn;
 
   useEffect(() => {
     indexRef.current = index;
@@ -449,7 +460,15 @@ export default function RadarView({ place }: { place: Place }) {
     let cancelled = false;
     let cur = indexRef.current;
     const tick = async () => {
-      const next = (cur + 1) % stepCount;
+      // Radar-only: loop within [lo, hi], snapping in from any manual scrub outside it.
+      // Otherwise cycle the whole timeline.
+      let next: number;
+      if (onlyRadar && radarRange) {
+        next = cur + 1;
+        if (next < radarRange.lo || next > radarRange.hi) next = radarRange.lo;
+      } else {
+        next = (cur + 1) % stepCount;
+      }
       const nextRadar = timeline[next]?.radarIndex ?? null;
       await Promise.all([
         nextRadar != null
@@ -466,7 +485,7 @@ export default function RadarView({ place }: { place: Place }) {
     return () => {
       cancelled = true;
     };
-  }, [playing, visible, stepCount, data, timeline]);
+  }, [playing, visible, stepCount, data, timeline, onlyRadar, radarRange]);
 
   const airOn = airMode !== "off";
   const airLegend =

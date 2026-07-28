@@ -1,4 +1,4 @@
-import { useId } from "react";
+import type { CSSProperties } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { describeWeather } from "../api/weatherCode";
 import { WeatherIcon } from "./WeatherIcon";
@@ -8,7 +8,6 @@ import { StatusBar } from "./StatusBar";
 import { formatTemp, type Units } from "../utils/units";
 import { dayKey, formatTime, parseLocal } from "../utils/format";
 import { aqhiCategory, formatAqhi } from "../utils/aqhi";
-import { daylightIntensity } from "../utils/solar";
 import { isDaytime, type DailySummary } from "../utils/series";
 import type { ForecastCurrent, Place } from "../api/types";
 import { placeLabel, placeToSlug } from "../utils/place";
@@ -80,7 +79,6 @@ export function CurrentConditions({ place, current, today, units, aqhi, mini }: 
                   todayKey={mini!.dayKey}
                   sunrise={mini!.sunrise}
                   sunset={mini!.sunset}
-                  latitude={place.latitude}
                   nowIso={current.time}
                   nowTemp={current.temperature_2m}
                   units={units}
@@ -113,47 +111,21 @@ interface MiniProps {
   todayKey: string;
   sunrise?: string;
   sunset?: string;
-  latitude: number;
   nowIso: string;
   nowTemp: number;
   units: Units;
 }
 
-// Light-intensity shading interpolated in CIELAB from a deep, cool night to a
-// bright, warm midday. Lab keeps the brightness ramp perceptually even while the
-// hue drifts blue→warm (like real daylight color temperature), which reads far
-// nicer than flat grayscale. Endpoints: [L*, a*, b*].
-const NIGHT_LAB = [26, 6, -26];
-const DAY_LAB = [98, -4, 14];
+// The day/night background is now drawn with a CSS gradient (`.temp-mini__sky`
+// in index.css). JS only supplies the sunrise/sunset positions as CSS custom
+// properties (`--sunrise` / `--sunset`); the colours live in `--sky-day` /
+// `--sky-night` and the twilight-band width in `--sky-twilight`. The gradient is
+// a close approximation of the perceptual daylight model, not a per-pixel render.
 
-function labToRgb(L: number, a: number, b: number): string {
-  const fy = (L + 16) / 116;
-  const fx = fy + a / 500;
-  const fz = fy - b / 200;
-  const f3 = (t: number) => (t ** 3 > 0.008856 ? t ** 3 : (116 * t - 16) / 903.3);
-  // D65 reference white.
-  const X = 0.95047 * f3(fx);
-  const Y = 1.0 * f3(fy);
-  const Z = 1.08883 * f3(fz);
-  const lin = [
-    3.2406 * X - 1.5372 * Y - 0.4986 * Z,
-    -0.9689 * X + 1.8758 * Y + 0.0415 * Z,
-    0.0557 * X - 0.204 * Y + 1.057 * Z,
-  ];
-  const ch = lin.map((c) => {
-    const s = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.max(0, c) ** (1 / 2.4) - 0.055;
-    return Math.round(Math.max(0, Math.min(1, s)) * 255);
-  });
-  return `rgb(${ch[0]},${ch[1]},${ch[2]})`;
-}
-
-function stopColor(intensity: number, peak: number): string {
-  const t = peak > 0 ? Math.min(1, intensity / peak) : 0;
-  return labToRgb(
-    NIGHT_LAB[0] + (DAY_LAB[0] - NIGHT_LAB[0]) * t,
-    NIGHT_LAB[1] + (DAY_LAB[1] - NIGHT_LAB[1]) * t,
-    NIGHT_LAB[2] + (DAY_LAB[2] - NIGHT_LAB[2]) * t,
-  );
+/** Position (0..100 %) of a local ISO time across the [start, end] window. */
+function windowPct(iso: string, startMs: number, spanMs: number): number {
+  const p = ((parseLocal(iso).getTime() - startMs) / spanMs) * 100;
+  return Math.max(0, Math.min(100, p));
 }
 
 /** Compact temperature trace over one 2am→2am day: solar-lit background, actual
@@ -166,12 +138,10 @@ function TempMiniGraph({
   todayKey,
   sunrise,
   sunset,
-  latitude,
   nowIso,
   nowTemp,
   units,
 }: MiniProps) {
-  const gid = useId();
   const n = time.length;
 
   // Feels-like shown only where |feels − temp| > 2 °C.
@@ -250,28 +220,29 @@ function TempMiniGraph({
     if (v < lo) { lo = v; loI = i; }
   }
 
-  const intensity = daylightIntensity(time, sunrise, sunset, latitude);
-  const peak = intensity ? Math.max(...intensity, 1e-6) : 1;
+  // Daylight background: the sunrise/sunset positions (0..100 %) become CSS
+  // variables; the CSS gradient in `.temp-mini__sky` turns them into the
+  // night→day→night shading. Only drawn when both sun times are known.
+  const t0 = parseLocal(time[0]).getTime();
+  const winSpan = parseLocal(time[n - 1]).getTime() - t0;
+  const sky =
+    sunrise && sunset && winSpan > 0
+      ? ({
+          "--sunrise": `${windowPct(sunrise, t0, winSpan).toFixed(2)}%`,
+          "--sunset": `${windowPct(sunset, t0, winSpan).toFixed(2)}%`,
+        } as CSSProperties)
+      : null;
 
   return (
-    <svg
-      className="temp-mini"
-      viewBox={`0 0 ${W} ${H}`}
-      role="img"
-      aria-label="Temperature over the day (2 a.m. to 2 a.m.) with daylight shading"
-    >
-      {intensity ? (
-        <defs>
-          <linearGradient id={gid} x1="0" y1="0" x2="1" y2="0">
-            {intensity.map((v, i) => (
-              <stop key={i} offset={`${((i / (n - 1)) * 100).toFixed(2)}%`} stopColor={stopColor(v, peak)} />
-            ))}
-          </linearGradient>
-        </defs>
-      ) : null}
-      {intensity ? <rect x={padX} y={0} width={innerW} height={H} fill={`url(#${gid})`} /> : null}
-
-      {feelsPast.map((s, i) => (
+    <div className="temp-mini-wrap">
+      {sky ? <div className="temp-mini__sky" style={sky} aria-hidden="true" /> : null}
+      <svg
+        className="temp-mini"
+        viewBox={`0 0 ${W} ${H}`}
+        role="img"
+        aria-label="Temperature over the day (2 a.m. to 2 a.m.) with daylight shading"
+      >
+        {feelsPast.map((s, i) => (
         <path key={`fp${i}`} className="temp-mini__feels" d={toPath(s)} fill="none" vectorEffect="non-scaling-stroke" />
       ))}
       {feelsFut.map((s, i) => (
@@ -303,6 +274,7 @@ function TempMiniGraph({
           </text>
         </g>
       ) : null}
-    </svg>
+      </svg>
+    </div>
   );
 }

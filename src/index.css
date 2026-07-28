@@ -12,6 +12,14 @@
   --hi: #e03131;
   --lo: #4dabf7;
   --feels: #c2255c;
+  /* Mini-graph day/night shading (see .temp-mini__sky). Endpoints are the old
+     CIELAB night/day colours resolved to sRGB; --sunrise/--sunset are set per
+     render by JS. Theme-independent, matching the previous SVG gradient. */
+  --sky-day: rgb(253, 251, 222);
+  --sky-night: rgb(42, 61, 101);
+  /* Twilight band width on each side (as % of the graph): the night→day and
+     day→night ramp, approximating the perceptual model's dusk/dawn knee. */
+  --sky-twilight: 5%;
   /* Scrubber track: plain where there's no radar, tinted where radar is available.
      Both derive from theme vars, so they adapt to light/dark automatically. */
   --radar-track: var(--border);
@@ -310,7 +318,37 @@ button {
   grid-column: span 2;
   gap: 2px;
 }
+.temp-mini-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+/* Day/night background as a CSS gradient built from the sunrise/sunset positions
+   (--sunrise/--sunset, set by JS) and a twilight band (--sky-twilight): night up
+   to just before sunrise, ramp to day, a bright plateau, then ramp back to night
+   just after sunset. Inset 2.38% (= the graph's 4px padding at its 168px
+   viewBox) so it aligns with the plotted temperature curve. */
+.temp-mini__sky {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2.38%;
+  right: 2.38%;
+  z-index: 0;
+  border-radius: 3px;
+  background: linear-gradient(
+    to right,
+    var(--sky-night) 0%,
+    var(--sky-night) calc(var(--sunrise) - var(--sky-twilight)),
+    var(--sky-day) var(--sunrise),
+    var(--sky-day) var(--sunset),
+    var(--sky-night) calc(var(--sunset) + var(--sky-twilight)),
+    var(--sky-night) 100%
+  );
+}
 .temp-mini {
+  position: relative;
+  z-index: 1;
   display: block;
   width: 100%;
   height: auto;
