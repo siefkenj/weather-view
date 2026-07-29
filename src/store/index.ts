@@ -18,9 +18,10 @@ export const store = configureStore({
   middleware: (getDefault) => getDefault().concat(openMeteoApi.middleware),
 });
 
-// Enables focus/online tracking so the 10-minute polling can pause while the tab
-// is backgrounded (skipPollingIfUnfocused). We don't set refetchOnFocus, so this
-// doesn't cause extra refetches on its own.
+// Enables focus/online tracking used by the live weather queries (hooks/useWeather.ts):
+// polling pauses while the tab is backgrounded (skipPollingIfUnfocused), and those
+// queries refetch on tab-refocus / reconnect (refetchOnFocus / refetchOnReconnect, set
+// per-hook so the low-priority map grids and ensemble aren't affected).
 setupListeners(store.dispatch);
 
 export type RootState = ReturnType<typeof store.getState>;

@@ -1,10 +1,14 @@
 // localStorage-backed response cache for the JSON APIs, with two independent bounds:
 //
-//   • FRESHNESS by clock hour — an entry is only served *without a refetch* if it was
-//     fetched during the current clock hour. Open-Meteo's forecast / air-quality /
-//     wind windows are relative to "now" and roll hourly (the hours that were forecast
-//     become observations), so once the hour changes we refetch and pick up the
-//     accurate historical data. This is what keeps the cache honest as time passes.
+//   • FRESHNESS — how long an entry is served *without a refetch*. Two modes (per read):
+//       - "hour" (default): only within the clock hour it was fetched. Open-Meteo's
+//         forecast / air-quality / wind windows are relative to "now" and roll hourly
+//         (the hours that were forecast become observations), so once the hour changes
+//         we refetch and pick up the accurate historical data. Used by the large,
+//         low-priority map grids.
+//       - { maxAgeMs }: a fixed, short age. The live point queries (forecast / minutely
+//         / air-quality panel) use this so their 10-minute poll and tab-refocus refetch
+//         actually revalidate over the network instead of being absorbed by the cache.
 //
 //   • HARD EXPIRY after ~2 days — older entries are dropped entirely. Until then a
 //     non-fresh entry is still handed back as a *stale fallback* (see http.ts) when the
@@ -55,13 +59,17 @@ function entryAt(s: Storage, key: string): number {
 
 export interface CacheHit<T> {
   body: T;
-  /** Same clock hour as now → safe to serve without a refetch. */
+  /** Within the freshness window → safe to serve without a refetch. */
   fresh: boolean;
 }
 
+/** How long a cached entry counts as fresh: within the same clock hour ("hour", the
+ *  default), or within a fixed age ({ maxAgeMs }) for data that must revalidate sooner. */
+export type CacheFreshness = "hour" | { maxAgeMs: number };
+
 /** Look up a URL. Returns the entry (with a freshness flag) if present and within the
  *  hard TTL, else null. A non-fresh hit is still returned — as a stale fallback. */
-export function readCache<T>(url: string): CacheHit<T> | null {
+export function readCache<T>(url: string, freshness: CacheFreshness = "hour"): CacheHit<T> | null {
   const s = store();
   if (!s) return null;
   const key = PREFIX + url;
@@ -87,7 +95,9 @@ export function readCache<T>(url: string): CacheHit<T> | null {
     }
     return null;
   }
-  return { body: entry.body, fresh: entry.hour === hourBucket(now) };
+  const fresh =
+    freshness === "hour" ? entry.hour === hourBucket(now) : now - entry.at <= freshness.maxAgeMs;
+  return { body: entry.body, fresh };
 }
 
 /** Store a response, pruning expired (and, on quota failure, oldest) entries. */

@@ -23,10 +23,18 @@ export interface ForecastOptions {
   extraModels?: string[];
 }
 
-// Refresh the near-term data (and with it the "now" marker + current readings)
-// every 10 minutes, but not while the tab is in the background.
+// Live-data refresh policy for the point queries (forecast, minutely, air quality):
+// poll every 10 minutes — paused while the tab is backgrounded — and also refetch the
+// instant the tab is refocused or the network reconnects, so returning to the app shows
+// current data. These queries use a short cache window (LIVE_CACHE) so each of these
+// refetches actually revalidates over the network. Requires setupListeners (store/index).
 const POLL_MS = 10 * 60 * 1000;
-const poll = { pollingInterval: POLL_MS, skipPollingIfUnfocused: true } as const;
+const poll = {
+  pollingInterval: POLL_MS,
+  skipPollingIfUnfocused: true,
+  refetchOnFocus: true,
+  refetchOnReconnect: true,
+} as const;
 
 /** Retain the last defined data while a refetch is in flight (parity with the old
  *  `placeholderData: keepPreviousData`). Nothing is retained while a query is
@@ -85,7 +93,7 @@ export function useAirQuality(
       forecastDays: options.forecastDays,
       pastDays: options.pastDays,
     },
-    { skip: !options.enabled },
+    { skip: !options.enabled, ...poll },
   );
   return { ...r, data: useKeepData(r.data, r.isFetching) };
 }

@@ -202,6 +202,11 @@ export function Dashboard({ place }: { place: Place }) {
     const i = findNowIndex(airQ.data.hourly.time, forecast.current.time);
     return i >= 0 ? aqhi[i] : null;
   }, [aqhi, airQ.data, forecast]);
+  const currentAqi = useMemo(() => {
+    if (!airQ.data || !forecast) return null;
+    const i = findNowIndex(airQ.data.hourly.time, forecast.current.time);
+    return i >= 0 ? airQ.data.hourly.us_aqi[i] : null;
+  }, [airQ.data, forecast]);
 
   // Peak AQHI per calendar day (the index is reported as a daily max) for the day
   // popups. Empty when air quality isn't loaded or is past its ~7-day horizon.
@@ -442,6 +447,7 @@ export function Dashboard({ place }: { place: Place }) {
         today={today}
         units={state.units}
         aqhi={currentAqhi}
+        aqi={currentAqi}
         mini={miniWindow}
       />
 

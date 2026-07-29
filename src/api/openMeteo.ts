@@ -100,8 +100,20 @@ export function buildForecastUrl(params: ForecastParams): string {
   });
 }
 
+// Live point data (forecast / minutely / air-quality panel) must actually revalidate on
+// its 10-minute poll and on tab-refocus (hooks/useWeather.ts), so its localStorage entry
+// is treated as fresh only briefly — long enough to serve instant reloads and dedupe
+// near-simultaneous requests, but well under the poll interval so every poll hits the
+// network. The map grids and the ensemble stay on the hourly cache (cache: true): they're
+// large / slow-moving and lower-priority, fine to serve from the same-hour cache.
+const LIVE_CACHE = { maxAgeMs: 2 * 60 * 1000 } as const; // 2 min
+
 export function fetchForecast(params: ForecastParams, signal?: AbortSignal): Promise<ForecastResponse> {
-  return fetchJson<ForecastResponse>(buildForecastUrl(params), { label: "forecast", signal, cache: true });
+  return fetchJson<ForecastResponse>(buildForecastUrl(params), {
+    label: "forecast",
+    signal,
+    cache: LIVE_CACHE,
+  });
 }
 
 export interface MinutelyParams {
@@ -128,7 +140,11 @@ export function buildMinutelyUrl(params: MinutelyParams): string {
 }
 
 export function fetchMinutely(params: MinutelyParams, signal?: AbortSignal): Promise<MinutelyResponse> {
-  return fetchJson<MinutelyResponse>(buildMinutelyUrl(params), { label: "minutely", signal, cache: true });
+  return fetchJson<MinutelyResponse>(buildMinutelyUrl(params), {
+    label: "minutely",
+    signal,
+    cache: LIVE_CACHE,
+  });
 }
 
 export interface EnsembleParams {
@@ -184,7 +200,7 @@ export function fetchAirQuality(
   return fetchJson<AirQualityResponse>(buildAirQualityUrl(params), {
     label: "air quality",
     signal,
-    cache: true,
+    cache: LIVE_CACHE,
   });
 }
 

@@ -21,6 +21,15 @@ export function formatWeekday(iso: string): string {
   return parseLocal(iso).toLocaleDateString(undefined, { weekday: "short" });
 }
 
+/** "Thursday, July 24" — weekday + month + day, no year, for the day heading. */
+export function formatWeekdayLong(iso: string): string {
+  return parseLocal(iso).toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 export function formatMonthDay(iso: string): string {
   const d = parseLocal(iso);
   return `${d.getMonth() + 1}/${d.getDate()}`;

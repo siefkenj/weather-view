@@ -6,7 +6,7 @@ import { LocationSearch } from "./LocationSearch";
 import { SettingsMenu } from "./SettingsMenu";
 import { StatusBar } from "./StatusBar";
 import { formatTemp, type Units } from "../utils/units";
-import { dayKey, formatTime, parseLocal } from "../utils/format";
+import { dayKey, formatTime, formatWeekdayLong, parseLocal } from "../utils/format";
 import { aqhiCategory, formatAqhi } from "../utils/aqhi";
 import { isDaytime, type DailySummary } from "../utils/series";
 import type { ForecastCurrent, Place } from "../api/types";
@@ -18,6 +18,7 @@ interface Props {
   today?: DailySummary;
   units: Units;
   aqhi?: number | null;
+  aqi?: number | null;
   /** Hourly data across one 2am→2am weather day for the mini graph (°C). `dayKey`
    *  is the day the high/low markers belong to; sunrise/sunset drive the shading. */
   mini?: {
@@ -30,10 +31,24 @@ interface Props {
   } | null;
 }
 
-export function CurrentConditions({ place, current, today, units, aqhi, mini }: Props) {
+/** US AQI is a 0–500 integer; "–" when unavailable. */
+const formatAqi = (v: number | null | undefined): string =>
+  v != null && Number.isFinite(v) ? String(Math.round(v)) : "–";
+
+/** Daily rain as amount + chance, e.g. "2.4mm (60%)". Always in mm, like the chart. */
+function formatRain(mm: number | null | undefined, chance: number | null | undefined): string {
+  const amt = mm != null && Number.isFinite(mm) ? mm : 0;
+  const pct = chance != null && Number.isFinite(chance) ? Math.round(chance) : 0;
+  const a = amt <= 0 ? "0" : amt < 10 ? amt.toFixed(1) : String(Math.round(amt));
+  return `${a}mm (${pct}%)`;
+}
+
+export function CurrentConditions({ place, current, today, units, aqhi, aqi, mini }: Props) {
   const wx = describeWeather(current.weather_code);
   const day = isDaytime(current.time, today?.sunrise, today?.sunset);
   const cat = aqhi != null && Number.isFinite(aqhi) ? aqhiCategory(aqhi) : null;
+  const hasAir =
+    (aqhi != null && Number.isFinite(aqhi)) || (aqi != null && Number.isFinite(aqi));
   const hasMini = mini && mini.time.length > 1;
   const navigate = useNavigate();
   const location = useLocation();
@@ -51,18 +66,15 @@ export function CurrentConditions({ place, current, today, units, aqhi, mini }: 
         <LocationSearch onSelect={goToPlace} />
         <SettingsMenu />
       </div>
-      <div className="current__main">
-        <WeatherIcon kind={wx.icon} night={!day} size={84} title={wx.label} />
-        <div className="current__temp-block">
-          <div className="current__temp">{formatTemp(current.temperature_2m, units, 0)}</div>
-          <div className="current__label">{wx.label}</div>
-          <div className="current__feels">Feels like {formatTemp(current.apparent_temperature, units, 0)}</div>
-          {cat ? (
-            <div className="current__aqhi" title={cat.message}>
-              <span className="aqi-chip" style={{ background: cat.color }}>{cat.label}</span>
-              <span className="current__aqhi-val">AQHI {formatAqhi(aqhi)}</span>
-            </div>
-          ) : null}
+      <div className="current__today">
+        <div className="current__date">{formatWeekdayLong(current.time)}</div>
+        <div className="current__main">
+          <WeatherIcon kind={wx.icon} night={!day} size={84} title={wx.label} />
+          <div className="current__temp-block">
+            <div className="current__temp">{formatTemp(current.temperature_2m, units, 0)}</div>
+            <div className="current__label">{wx.label}</div>
+            <div className="current__feels">Feels like {formatTemp(current.apparent_temperature, units, 0)}</div>
+          </div>
         </div>
       </div>
       <div className="current__meta">
@@ -90,6 +102,10 @@ export function CurrentConditions({ place, current, today, units, aqhi, mini }: 
               <span className="fact-val">{Math.round(today.uvMax ?? 0)}</span>
             </li>
             <li>
+              <span className="fact-key">Rain</span>
+              <span className="fact-val">{formatRain(today.precipSum, today.precipProbMax)}</span>
+            </li>
+            <li>
               <span className="fact-key">Sunrise</span>
               <span className="fact-val">{formatTime(today.sunrise)}</span>
             </li>
@@ -97,6 +113,19 @@ export function CurrentConditions({ place, current, today, units, aqhi, mini }: 
               <span className="fact-key">Sunset</span>
               <span className="fact-val">{formatTime(today.sunset)}</span>
             </li>
+            {hasAir ? (
+              <li className="fact fact--air" title={cat?.message}>
+                <span className="fact-key">AQHI / AQI</span>
+                <span className="fact-val">
+                  {formatAqhi(aqhi)} / {formatAqi(aqi)}
+                </span>
+                {cat ? (
+                  <span className="aqi-chip aqi-chip--sm" style={{ background: cat.color }}>
+                    {cat.short}
+                  </span>
+                ) : null}
+              </li>
+            ) : null}
           </ul>
         ) : null}
       </div>
@@ -225,6 +254,19 @@ function TempMiniGraph({
   // night→day→night shading. Only drawn when both sun times are known.
   const t0 = parseLocal(time[0]).getTime();
   const winSpan = parseLocal(time[n - 1]).getTime() - t0;
+
+  // Faint vertical guides every 3 hours (03:00, 06:00 … 00:00) across the 2am→2am
+  // window, positioned by real elapsed time so they hold on hourly or 15-min grids.
+  const gridX: number[] = [];
+  if (winSpan > 0) {
+    const startHour = Number(time[0].slice(11, 13));
+    for (let h = 1; h < 24; h++) {
+      if ((startHour + h) % 3 !== 0) continue;
+      const gx = padX + ((h * 3600_000) / winSpan) * innerW;
+      if (gx > padX && gx < padX + innerW) gridX.push(gx);
+    }
+  }
+
   const sky =
     sunrise && sunset && winSpan > 0
       ? ({
@@ -242,7 +284,10 @@ function TempMiniGraph({
         role="img"
         aria-label="Temperature over the day (2 a.m. to 2 a.m.) with daylight shading"
       >
-        {feelsPast.map((s, i) => (
+        {gridX.map((gx, i) => (
+        <line key={`grid${i}`} className="temp-mini__grid" x1={gx} x2={gx} y1={0} y2={H} vectorEffect="non-scaling-stroke" />
+      ))}
+      {feelsPast.map((s, i) => (
         <path key={`fp${i}`} className="temp-mini__feels" d={toPath(s)} fill="none" vectorEffect="non-scaling-stroke" />
       ))}
       {feelsFut.map((s, i) => (
@@ -255,7 +300,7 @@ function TempMiniGraph({
         <path className="temp-mini__line" d={toPath(past)} fill="none" vectorEffect="non-scaling-stroke" />
       ) : null}
       {nowFrac > 0 ? (
-        <line className="temp-mini__now" x1={nowX} x2={nowX} y1={padTop - 6} y2={H - padBottom + 2} />
+        <line className="temp-mini__now" x1={nowX} x2={nowX} y1={0} y2={H} />
       ) : null}
 
       {hiI >= 0 ? (
