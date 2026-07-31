@@ -969,6 +969,7 @@ button {
   padding: 3px 10px;
   border-radius: 999px;
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+  text-align: center;
 }
 /* Compact chip carrying the AQ health summary inside the AQHI/AQI fact. */
 .aqi-chip--sm {
