@@ -8,6 +8,8 @@ import { StatusBar } from "./StatusBar";
 import { formatTemp, type Units } from "../utils/units";
 import { dayKey, formatTime, formatWeekdayLong, parseLocal } from "../utils/format";
 import { aqhiCategory, formatAqhi } from "../utils/aqhi";
+import { formatWindSpeed, windCompass } from "../utils/wind";
+import { WindArrow } from "./WindArrow";
 import { isDaytime, type DailySummary } from "../utils/series";
 import type { ForecastCurrent, Place } from "../api/types";
 import { placeLabel, placeToSlug } from "../utils/place";
@@ -68,6 +70,7 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
       </div>
       <div className="current__today">
         <div className="current__date">{formatWeekdayLong(current.time)}</div>
+        <div className="current__place">{placeLabel(place)}</div>
         <div className="current__main">
           <WeatherIcon kind={wx.icon} night={!day} size={84} title={wx.label} />
           <div className="current__temp-block">
@@ -78,12 +81,13 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
         </div>
       </div>
       <div className="current__meta">
-        <div className="current__place">{placeLabel(place)}</div>
         {today ? (
-          <ul className="current__facts">
+          <div className="current__day">
             {hasMini ? (
-              <li className="fact fact--graph">
-                <span className="fact-key">High / Low</span>
+              // The day trace sits to the LEFT of the facts; the facts fill the space to
+              // its right and center on their line.
+              <div className="fact fact--graph">
+                <span className="fact-key">Today</span>
                 <TempMiniGraph
                   time={mini!.time}
                   temperature={mini!.temperature}
@@ -95,8 +99,9 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
                   nowTemp={current.temperature_2m}
                   units={units}
                 />
-              </li>
+              </div>
             ) : null}
+            <ul className="current__facts">
             <li>
               <span className="fact-key">UV max</span>
               <span className="fact-val">{Math.round(today.uvMax ?? 0)}</span>
@@ -104,6 +109,18 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
             <li>
               <span className="fact-key">Rain</span>
               <span className="fact-val">{formatRain(today.precipSum, today.precipProbMax)}</span>
+            </li>
+            <li>
+              <span className="fact-key">Wind</span>
+              <span className="fact-val">
+                {formatWindSpeed(today.windMax)}
+                {Number.isFinite(today.windMax) && Number.isFinite(today.windDir) ? (
+                  <>
+                    {" "}
+                    <WindArrow deg={today.windDir} /> {windCompass(today.windDir)}
+                  </>
+                ) : null}
+              </span>
             </li>
             <li>
               <span className="fact-key">Sunrise</span>
@@ -115,9 +132,9 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
             </li>
             {hasAir ? (
               <li className="fact fact--air" title={cat?.message}>
-                <span className="fact-key">AQHI / AQI</span>
+                <span className="fact-key">AQHI (AQI)</span>
                 <span className="fact-val">
-                  {formatAqhi(aqhi)} / {formatAqi(aqi)}
+                  {formatAqhi(aqhi)} ({formatAqi(aqi)})
                 </span>
                 {cat ? (
                   <span className="aqi-chip aqi-chip--sm" style={{ background: cat.color }}>
@@ -126,7 +143,8 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
                 ) : null}
               </li>
             ) : null}
-          </ul>
+            </ul>
+          </div>
         ) : null}
       </div>
     </section>

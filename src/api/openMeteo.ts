@@ -31,6 +31,8 @@ export const HOURLY_VARS = [
   "surface_pressure",
   "cloud_cover",
   "shortwave_radiation",
+  "wind_speed_10m",
+  "wind_direction_10m",
 ] as const;
 
 export const DAILY_VARS = [
@@ -43,6 +45,8 @@ export const DAILY_VARS = [
   "precipitation_sum",
   "temperature_2m_max",
   "temperature_2m_min",
+  "wind_speed_10m_max",
+  "wind_direction_10m_dominant",
 ] as const;
 
 export const CURRENT_VARS = ["temperature_2m", "apparent_temperature", "weather_code"] as const;

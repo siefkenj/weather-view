@@ -27,7 +27,7 @@ import {
   sliceFine,
   toFineSamples,
 } from "../utils/refine";
-import { addDays, dayKey, formatMonthDay, parseLocal, todayInZone } from "../utils/format";
+import { addDays, dayKey, parseLocal, todayInZone } from "../utils/format";
 import { arrowTarget, clampStartIso, shiftStart } from "../utils/pan";
 import { computeAqhiSeries } from "../utils/aqhi";
 import type { Place } from "../api/types";
@@ -462,9 +462,12 @@ export function Dashboard({ place }: { place: Place }) {
               controls.setViewStart(null);
             }}
             disabled={anchored}
-            title="Jump back to today"
+            title="Return to today"
           >
-            {formatMonthDay(startKey)} – {formatMonthDay(endKey)}
+            <span className="meteogram-nav__range-icon" aria-hidden="true">
+              ↺
+            </span>
+            Return to today
           </button>
           {refined ? (
             <span className="meteogram-nav__res" title="Showing 15-minute detail for the near term (temperature, feels-like, and precipitation).">

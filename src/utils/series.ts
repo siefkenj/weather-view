@@ -14,6 +14,8 @@ export interface HourlyPoint {
   cloudCover: number[];
   pressure: number[];
   radiation: number[];
+  windSpeed: number[];
+  windDirection: number[];
 }
 
 export interface DailySummary {
@@ -27,6 +29,9 @@ export interface DailySummary {
   uvMax: number;
   sunrise: string;
   sunset: string;
+  /** Day's peak wind speed (km/h) and its dominant direction (° the wind is from). */
+  windMax: number;
+  windDir: number;
 }
 
 /** Pull the hourly block into named arrays (full past+future range). */
@@ -43,6 +48,8 @@ export function extractHourly(resp: ForecastResponse): HourlyPoint {
     cloudCover: h.cloud_cover,
     pressure: h.surface_pressure,
     radiation: h.shortwave_radiation,
+    windSpeed: h.wind_speed_10m,
+    windDirection: h.wind_direction_10m,
   };
 }
 
@@ -59,6 +66,8 @@ function sliceHourly(h: HourlyPoint, start: number, end: number): HourlyPoint {
     cloudCover: s(h.cloudCover),
     pressure: s(h.pressure),
     radiation: s(h.radiation),
+    windSpeed: s(h.windSpeed),
+    windDirection: s(h.windDirection),
   };
 }
 
@@ -117,6 +126,8 @@ export function dailySummaries(resp: ForecastResponse): DailySummary[] {
     uvMax: d.uv_index_max[i],
     sunrise: d.sunrise[i],
     sunset: d.sunset[i],
+    windMax: d.wind_speed_10m_max[i],
+    windDir: d.wind_direction_10m_dominant[i],
   }));
 }
 

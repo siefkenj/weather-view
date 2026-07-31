@@ -50,6 +50,8 @@ export interface ForecastHourly {
   surface_pressure: number[];
   cloud_cover: number[];
   shortwave_radiation: number[];
+  wind_speed_10m: number[];
+  wind_direction_10m: number[];
 }
 
 export interface ForecastDaily {
@@ -63,6 +65,8 @@ export interface ForecastDaily {
   precipitation_sum: number[];
   temperature_2m_max: number[];
   temperature_2m_min: number[];
+  wind_speed_10m_max: number[];
+  wind_direction_10m_dominant: number[];
 }
 
 export interface ForecastResponse {

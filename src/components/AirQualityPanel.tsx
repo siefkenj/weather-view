@@ -3,6 +3,17 @@ import { formatDayShort, formatFullDate, formatTime } from "../utils/format";
 import { findNowIndex } from "../utils/series";
 import type { AirQualityResponse } from "../api/types";
 
+// Hover explanations for the two indices — what they are and how they're computed.
+const AQHI_HELP =
+  "AQHI — Air Quality Health Index (Canada, scale 1–10+). A short-term health-risk index from " +
+  "Environment and Climate Change Canada, computed from the combined health risk of ground-level " +
+  "ozone (O₃), nitrogen dioxide (NO₂), and fine particulate matter (PM2.5), using their 3-hour " +
+  "average concentrations.";
+const AQI_HELP =
+  "AQI — U.S. Air Quality Index (US EPA, scale 0–500). Each pollutant (PM2.5, PM10, ozone, NO₂, " +
+  "SO₂, CO) is converted to a 0–500 sub-index via EPA concentration breakpoints; the AQI shown is " +
+  "the highest sub-index — i.e. the single worst pollutant at that hour.";
+
 interface Props {
   data: AirQualityResponse;
   /** AQHI per hour, aligned to data.hourly.time. */
@@ -19,6 +30,8 @@ export function AirQualityPanel({ data, aqhi, nowIso }: Props) {
   const fi = Math.max(0, findNowIndex(h.time, nowIso));
   const focusIso = h.time[fi] ?? nowIso;
   const cat = aqhiCategory(aqhi[fi]);
+  const usAqi = h.us_aqi?.[fi];
+  const aqiText = usAqi != null && Number.isFinite(usAqi) ? Math.round(usAqi) : "–";
 
   const tiles = [
     { key: "PM2.5", value: h.pm2_5?.[fi], unit: units.pm2_5 },
@@ -38,8 +51,15 @@ export function AirQualityPanel({ data, aqhi, nowIso }: Props) {
         </div>
         <div className="aqi-badge">
           <span className="aqi-number">
-            {formatAqhi(aqhi[fi])}
-            <span className="aqi-unit">AQHI</span>
+            <span className="aqi-aqhi" title={AQHI_HELP}>
+              {formatAqhi(aqhi[fi])}
+              <span className="aqi-unit">AQHI</span>
+            </span>
+            <span className="aqi-alt" title={AQI_HELP}>
+              <span className="aqi-alt__paren">(</span>
+              <span className="aqi-alt__num">{aqiText}</span> AQI
+              <span className="aqi-alt__paren">)</span>
+            </span>
           </span>
           <span className="aqi-chip" style={{ background: cat.color }}>
             {cat.label}

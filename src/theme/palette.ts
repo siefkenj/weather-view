@@ -15,6 +15,7 @@ export interface ChartPalette {
   humidity: string;
   pressure: string;
   radiation: string;
+  wind: string;
   bandTemp: string;
   bandPrecip: string;
   axisLine: string;
@@ -40,6 +41,9 @@ const SERIES = {
   humidity: "#40b06a",
   pressure: "#495057",
   radiation: "#f59f00",
+  // Wind overlays the atmosphere panel; grape stands apart from its green humidity
+  // and grey cloud/pressure.
+  wind: "#ae3ec9",
 };
 
 export function chartPalette(theme: Theme): ChartPalette {

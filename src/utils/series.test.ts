@@ -20,6 +20,8 @@ function sample(days = 5): HourlyPoint {
     cloudCover: fill,
     pressure: fill,
     radiation: fill,
+    windSpeed: fill,
+    windDirection: fill,
   };
 }
 

@@ -11,8 +11,9 @@ import type { PanelKey, SeriesKey } from "../hooks/useUrlState";
 import { cToDisplay, PRECIP_UNIT, tempUnit, type Units } from "../utils/units";
 import { moistAirEnthalpyPerVolume, wetBulbTemperature } from "../utils/psychro";
 import { formatClock, formatDayShort, formatTime, parseLocal } from "../utils/format";
+import { windArrowSpan, windCompass } from "../utils/wind";
 import { dayShadeMarkArea } from "./meteogramShading";
-import { AXIS_GUTTER, AXIS_GUTTER_RIGHT_MOBILE, computeHorizontalLayout, TEMP_HEADROOM } from "./meteogramLayout";
+import { AXIS_GUTTER, AXIS_GUTTER_RIGHT_MOBILE, computeHorizontalLayout, TEMP_HEADROOM, TILE_BAND } from "./meteogramLayout";
 import { AQI_LEGEND, AQHI_LEGEND, type AirMode } from "../api/airQualityGrid";
 import type { HourlyPoint } from "../utils/series";
 
@@ -56,6 +57,7 @@ export function seriesColor(palette: ChartPalette, airIndex: AirMode = "aqhi"): 
     "Cloud cover": palette.cloud,
     Humidity: palette.humidity,
     Pressure: palette.pressure,
+    "Wind speed": palette.wind,
     "Air quality": AIR_REP[airIndex],
   };
 }
@@ -87,6 +89,34 @@ export interface MeteogramInput {
 
 const round1 = (n: number) => (Number.isFinite(n) ? Math.round(n * 10) / 10 : NaN);
 
+/** The temperature-panel lines, as (series key → legend name). Excludes "wind", which
+ *  is an opt-in series but rides the atmosphere panel, not the temperature one. */
+const TEMP_LINES: { key: SeriesKey; name: string }[] = [
+  { key: "temp", name: "Temperature" },
+  { key: "feels", name: "Feels like" },
+  { key: "dew", name: "Dew point" },
+  { key: "wetbulb", name: "Wet bulb" },
+  { key: "enthalpy", name: "Enthalpy" },
+];
+
+/**
+ * Whether the temperature panel is laid out at all. It shows when any of its lines is
+ * on; if every temperature line is off it's dropped entirely — unless there are no other
+ * panels either, in which case it stays so the chart is never empty. Shared by the option
+ * builder and the Meteogram overlay so their grids agree. `panels` is the on-panels
+ * (precip/atmo/air); the temp panel is implicit and not in that list.
+ */
+export function tempPanelVisible(
+  series: SeriesKey[],
+  hidden: string[] | undefined,
+  panels: PanelKey[],
+): boolean {
+  const h = new Set(hidden ?? []);
+  const sset = new Set(series);
+  const anyLine = TEMP_LINES.some((l) => sset.has(l.key) && !h.has(l.name));
+  return anyLine || panels.length === 0;
+}
+
 export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   const { hourly, palette, units, series, panels, tempBand, precipBand, nowIso } = input;
   const airIndex: AirMode = input.airIndex ?? "aqhi";
@@ -117,14 +147,34 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
 
   const showPrecip = panels.includes("precip");
   const showAtmo = panels.includes("atmo");
+  // Wind speed is an opt-in overlay on the atmosphere panel (off by default): shown only
+  // when that panel is on and the "wind" series is toggled on.
+  const showWind = showAtmo && series.includes("wind") && !isHidden("Wind speed");
   // The air panel is laid out whenever it's toggled on (so the axis shows even with
   // no data); the LINE is only drawn when there's actually data for the window.
   const showAir = panels.includes("air");
   const hasAirData = showAir && Array.isArray(input.air) && input.air.some((v) => v != null && Number.isFinite(v));
 
+  // Temperature-panel lines all ride the left °-axis, except enthalpy (its own right
+  // axis). Precompute each line's visibility so the series below reuse it and — the
+  // reason it's here — so the left temperature axis can hide when every line on it is
+  // toggled off (otherwise an orphaned °-scale lingers over an empty panel).
+  const showTemp = series.includes("temp") && !isHidden("Temperature");
+  const showFeels = series.includes("feels") && !isHidden("Feels like");
+  const showDew = series.includes("dew") && !isHidden("Dew point");
+  const showWetbulb = series.includes("wetbulb") && !isHidden("Wet bulb");
+  const showEnthalpy = series.includes("enthalpy") && !isHidden("Enthalpy");
+  const showTempAxis = showTemp || showFeels || showDew || showWetbulb;
+
   // ---- Panel layout (percentages) --------------------------------------
   const layoutPanels = showAir ? panels : panels.filter((p) => p !== "air");
-  const { panelKeys: panelList, grids: gridBoxes } = computeHorizontalLayout(layoutPanels);
+  // Drop the whole temperature panel when every temp line is off (see tempPanelVisible).
+  // Without it, the date tiles lose their host headroom, so reserve a top band for them.
+  const showTempPanel = tempPanelVisible(series, input.hidden, layoutPanels);
+  const { panelKeys: panelList, grids: gridBoxes } = computeHorizontalLayout(layoutPanels, {
+    includeTemp: showTempPanel,
+    tileBand: input.headroom && !showTempPanel ? TILE_BAND : 0,
+  });
 
   const grids: EChartsOption["grid"] = gridBoxes.map((g) => ({
     left: AXIS_GUTTER,
@@ -192,30 +242,36 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   // A thick gridline + label every 5 °C (10 °F), and a thin gridline every 1 °C (2 °F).
   const gridStep = units === "imperial" ? 2 : 1;
   const labelStep = units === "imperial" ? 10 : 5;
-  pushY("temp", {
-    ...yBase(gridIndex.temp),
-    name: tempUnit(units),
-    ...axisName(palette.axisLabel),
-    scale: true,
-    interval: labelStep,
-    splitLine: { lineStyle: { color: palette.splitLine, width: 1.5 } },
-    minorTick: { show: false, splitNumber: Math.round(labelStep / gridStep) },
-    minorSplitLine: { show: true, lineStyle: { color: palette.splitLine, width: 0.5 } },
-    ...(input.headroom
-      ? {
-          // Snap the padded range to whole label steps so labels stay clean.
-          min: (v: { min: number; max: number }) =>
-            Math.floor((v.min - (v.max - v.min) * TEMP_HEADROOM.bottom) / labelStep) * labelStep,
-          max: (v: { min: number; max: number }) =>
-            Math.ceil((v.max + (v.max - v.min) * TEMP_HEADROOM.top) / labelStep) * labelStep,
-          axisLabel: { color: palette.axisLabel, showMinLabel: false, showMaxLabel: false },
-        }
-      : {}),
-  });
+  // The temperature °-axis exists only when its panel is laid out. When the panel is
+  // present but every LEFT-axis line is off (e.g. only enthalpy, on its right axis), the
+  // axis is kept but hidden via `show` — see showTempAxis.
+  if (showTempPanel) {
+    pushY("temp", {
+      ...yBase(gridIndex.temp),
+      show: showTempAxis,
+      name: tempUnit(units),
+      ...axisName(palette.axisLabel),
+      scale: true,
+      interval: labelStep,
+      splitLine: { lineStyle: { color: palette.splitLine, width: 1.5 } },
+      minorTick: { show: false, splitNumber: Math.round(labelStep / gridStep) },
+      minorSplitLine: { show: true, lineStyle: { color: palette.splitLine, width: 0.5 } },
+      ...(input.headroom
+        ? {
+            // Snap the padded range to whole label steps so labels stay clean.
+            min: (v: { min: number; max: number }) =>
+              Math.floor((v.min - (v.max - v.min) * TEMP_HEADROOM.bottom) / labelStep) * labelStep,
+            max: (v: { min: number; max: number }) =>
+              Math.ceil((v.max + (v.max - v.min) * TEMP_HEADROOM.top) / labelStep) * labelStep,
+            axisLabel: { color: palette.axisLabel, showMinLabel: false, showMaxLabel: false },
+          }
+        : {}),
+    });
+  }
   // Enthalpy lives on its own right-hand axis (kJ/m³): a different unit from the
   // °-scale left axis, auto-scaled so the curve fills the panel to roughly the
   // same height as temperature — same pattern as pressure in the atmo panel.
-  if (series.includes("enthalpy")) {
+  if (showEnthalpy) {
     pushY("enthalpy", {
       ...yBase(gridIndex.temp),
       name: compact ? "" : "kJ/m³",
@@ -238,6 +294,11 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   if (showAtmo) {
     pushY("pct", { ...yBase(gridIndex.atmo), min: 0, max: 100, axisLabel: { color: palette.axisLabel, formatter: pctFmt, showMinLabel: false } });
     pushY("pressure", { ...yBase(gridIndex.atmo), position: "right", scale: true, splitLine: { show: false }, axisLabel: rightLabel({ color: palette.pressure, formatter: "{value}" }) });
+  }
+  // Wind rides its own hidden, auto-scaled axis on the atmosphere panel (the left/right
+  // axes already hold cloud/humidity and pressure) — the value is read from the tooltip.
+  if (showWind) {
+    pushY("wind", { gridIndex: gridIndex.atmo, show: false, min: 0 });
   }
   const airFinite = hasAirData ? (input.air!.filter((v) => v != null && Number.isFinite(v)) as number[]) : [];
   const airMax =
@@ -320,7 +381,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
   };
 
   // Temperature confidence band (drawn under the lines) — forecast hours only.
-  if (tempBand && series.includes("temp") && !isHidden("Temperature")) {
+  if (tempBand && showTemp) {
     const lo = tempBand.lower.map((v, i) => (bandAt(i) ? round1(cToDisplay(v, units)) : NaN));
     const width = tempBand.upper.map((v, i) =>
       bandAt(i) ? round1(cToDisplay(v, units) - cToDisplay(tempBand.lower[i], units)) : NaN,
@@ -375,26 +436,26 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     data: [{ xAxis: time[nowIdx] }],
   });
 
-  if (series.includes("temp") && !isHidden("Temperature")) {
+  if (showTemp) {
     pushLine("Temperature", hourly.temperature.map((v) => round1(cToDisplay(v, units))), gridIndex.temp, yIdx.temp, 2, {
       z: 5,
     });
   }
-  if (series.includes("feels") && !isHidden("Feels like")) {
+  if (showFeels) {
     // Dashed, and only where it diverges from the temperature by > 2 °C.
     const feelsData = hourly.apparent.map((v, i) =>
       Math.abs(hourly.apparent[i] - hourly.temperature[i]) > 2 ? round1(cToDisplay(v, units)) : NaN,
     );
     pushLine("Feels like", feelsData, gridIndex.temp, yIdx.temp, 1.6, { lineStyle: { type: "dashed" } });
   }
-  if (series.includes("dew") && !isHidden("Dew point")) {
+  if (showDew) {
     pushLine("Dew point", hourly.dewPoint.map((v) => round1(cToDisplay(v, units))), gridIndex.temp, yIdx.temp, 1.6);
   }
-  if (series.includes("wetbulb") && !isHidden("Wet bulb")) {
+  if (showWetbulb) {
     const wb = hourly.temperature.map((t, i) => round1(cToDisplay(wetBulbTemperature(t, hourly.humidity[i], hourly.pressure[i]), units)));
     pushLine("Wet bulb", wb, gridIndex.temp, yIdx.temp, 1.6);
   }
-  if (series.includes("enthalpy") && !isHidden("Enthalpy")) {
+  if (showEnthalpy) {
     const en = hourly.temperature.map((t, i) => round1(moistAirEnthalpyPerVolume(t, hourly.humidity[i], hourly.pressure[i])));
     pushLine("Enthalpy", en, gridIndex.temp, yIdx.enthalpy, 1.6);
   }
@@ -458,6 +519,9 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     if (!isHidden("Pressure")) {
       pushLine("Pressure", hourly.pressure.map(round1), gridIndex.atmo, yIdx.pressure, 1.8);
     }
+    if (showWind) {
+      pushLine("Wind speed", hourly.windSpeed.map(round1), gridIndex.atmo, yIdx.wind, 1.8);
+    }
   }
 
   // Air-quality panel: the index line coloured by risk band (via visualMap below).
@@ -511,6 +575,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     "Cloud cover": "%",
     Humidity: "%",
     Pressure: " hPa",
+    "Wind speed": " km/h",
     "Air quality": airIndex === "aqi" ? " AQI" : " AQHI",
   };
 
@@ -559,12 +624,23 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
           const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};margin-right:6px"></span>`;
           const suffix = unitFor[p.seriesName] ?? "";
           const on = p.seriesName === hovered;
+          // Wind: append a bearing arrow (rotated to the exact direction) + compass
+          // point it's blowing from, looked up at the hovered index (not carried on the
+          // series value). Blank when unknown.
+          let windTail = "";
+          if (p.seriesName === "Wind speed" && idx != null) {
+            const deg = hourly.windDirection?.[idx];
+            const compass = windCompass(deg);
+            if (compass) windTail = ` ${windArrowSpan(deg, { color: palette.tooltipText })} ${compass}`;
+          }
           const valueStr =
             p.seriesName === "Temperature" && tempPm != null
               ? `${p.value} ± ${tempPm}${suffix}`
               : p.seriesName === "Precipitation"
                 ? `${round1(p.value * precipPerHour)}${suffix}`
-                : `${p.value}${suffix}`;
+                : p.seriesName === "Wind speed"
+                  ? `${p.value}${suffix}${windTail}`
+                  : `${p.value}${suffix}`;
           const row = `<span>${dot}${p.seriesName}</span><b>${valueStr}</b>`;
           const style =
             "display:flex;justify-content:space-between;gap:16px;border-radius:4px;padding:1px 4px;margin:0 -4px" +
@@ -634,6 +710,7 @@ export function meteogramLegend(input: { panels: PanelKey[]; palette: ChartPalet
     out.push({ name: "Cloud cover", color: colors["Cloud cover"], kind: "line", help: "Fraction of the sky covered by cloud (%)." });
     out.push({ name: "Humidity", color: colors.Humidity, kind: "line", help: "Relative humidity (%)." });
     out.push({ name: "Pressure", color: colors.Pressure, kind: "line", help: "Surface air pressure (hPa)." });
+    out.push({ name: "Wind speed", color: colors["Wind speed"], kind: "series", seriesKey: "wind", help: "Wind speed 10 m above ground (km/h). Off by default; overlaid on this panel with its own hidden scale — read the value from the hover tooltip." });
   }
   // Air quality is controlled by a dedicated three-way toggle (off / AQHI / AQI),
   // not a legend line, so it isn't listed here.

@@ -60,6 +60,23 @@ export function interpSeries(srcTime: string[], vals: number[], dstTime: string[
   return dstTime.map((t) => valueAt(srcMs, vals, ms(t)));
 }
 
+/** Resample a bearing series (degrees, 0–360) onto `dstTime`. Interpolates the
+ *  unit vectors, not the angle, so it takes the short way around the compass —
+ *  a linear blend of 350° and 10° gives ~0°, not 180°. NaN outside the range. */
+export function interpAngles(srcTime: string[], degs: number[], dstTime: string[]): number[] {
+  const srcMs = srcTime.map(ms);
+  const rad = degs.map((d) => (Number.isFinite(d) ? (d * Math.PI) / 180 : NaN));
+  const xs = rad.map(Math.cos);
+  const ys = rad.map(Math.sin);
+  return dstTime.map((t) => {
+    const tt = ms(t);
+    const x = valueAt(srcMs, xs, tt);
+    const y = valueAt(srcMs, ys, tt);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return NaN;
+    return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360;
+  });
+}
+
 /** Like interpSeries but null-aware: a target point is null when either
  *  bracketing source value is null/NaN (so real gaps stay gaps). */
 export function interpNullable(
@@ -133,6 +150,8 @@ export function refineHourlyWindow(window: HourlyPoint, fine: FineSamples): Hour
     cloudCover: interp(window.cloudCover),
     pressure: interp(window.pressure),
     radiation: interp(window.radiation),
+    windSpeed: interp(window.windSpeed),
+    windDirection: interpAngles(window.time, window.windDirection, time),
   };
 }
 

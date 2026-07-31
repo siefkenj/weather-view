@@ -23,6 +23,8 @@ function sampleHourly(hours = 48): HourlyPoint {
     cloudCover: fill((i) => 40 + (i % 10) * 3),
     pressure: fill(() => 1012),
     radiation: fill(() => 200),
+    windSpeed: fill((i) => 10 + (i % 12)),
+    windDirection: fill((i) => (i * 30) % 360),
   };
 }
 
@@ -105,6 +107,29 @@ describe("buildMeteogramOption", () => {
     expect(names).not.toContain("Cloud cover");
   });
 
+  it("hides the left temperature axis but keeps the panel when only enthalpy is on", () => {
+    // yAxis[0] is the temperature axis (pushed first) whenever the panel is present.
+    const tempAxis = (opt: ReturnType<typeof buildMeteogramOption>) =>
+      (opt.yAxis as { show?: boolean }[])[0];
+    // Visible whenever a line rides the left axis...
+    expect(tempAxis(buildMeteogramOption({ ...base, series: ["temp"], panels: ["precip"] })).show).not.toBe(false);
+    expect(tempAxis(buildMeteogramOption({ ...base, series: ["dew"], panels: ["precip"] })).show).not.toBe(false);
+    // ...but with only enthalpy (its own right axis), the panel stays and the left axis hides.
+    const opt = buildMeteogramOption({ ...base, series: ["enthalpy"], panels: ["precip"] });
+    expect(opt.grid).toHaveLength(2); // temp + precip — panel kept for enthalpy
+    expect(tempAxis(opt).show).toBe(false);
+  });
+
+  it("drops the whole temperature panel when every temperature line is off", () => {
+    const withTemp = buildMeteogramOption({ ...base, series: ["temp"], panels: ["precip", "atmo"] });
+    expect(withTemp.grid).toHaveLength(3); // temp + precip + atmo
+    const noTemp = buildMeteogramOption({ ...base, series: [], panels: ["precip", "atmo"] });
+    expect(noTemp.grid).toHaveLength(2); // precip + atmo — temp panel removed entirely
+    expect(seriesNames(noTemp)).not.toContain("Temperature");
+    // Falls back to keeping temp when there'd otherwise be no panel at all.
+    expect(buildMeteogramOption({ ...base, series: [], panels: [] }).grid).toHaveLength(1);
+  });
+
   it("adds confidence-band series when bands are supplied", () => {
     const band: Bands = {
       time: base.hourly.time,
@@ -128,6 +153,15 @@ describe("buildMeteogramOption", () => {
     // Enthalpy gets its own value axis named kJ/m³.
     const axisNames = (opt.yAxis as { name?: string }[]).map((a) => a.name);
     expect(axisNames).toContain("kJ/m³");
+  });
+
+  it("overlays wind speed on the atmosphere panel only when opted in", () => {
+    // Off by default (wind not in the series list).
+    expect(seriesNames(buildMeteogramOption({ ...base, series: ["temp"], panels: ["atmo"] }))).not.toContain("Wind speed");
+    // On when the wind series is toggled and the atmosphere panel is shown.
+    expect(seriesNames(buildMeteogramOption({ ...base, series: ["temp", "wind"], panels: ["atmo"] }))).toContain("Wind speed");
+    // Not drawn when the atmosphere panel is off, even with wind toggled on.
+    expect(seriesNames(buildMeteogramOption({ ...base, series: ["temp", "wind"], panels: ["precip"] }))).not.toContain("Wind speed");
   });
 
   it("computes plausible enthalpy values from temperature/humidity/pressure", () => {
@@ -345,6 +379,18 @@ describe("buildMeteogramOption", () => {
     };
     const opt15 = buildMeteogramOption({ ...base, hourly: fifteen, series: ["temp"], panels: ["precip"] });
     expect(mkRow(opt15)).toContain("4.4 mm/h");
+  });
+
+  it("appends a bearing arrow + compass direction to the wind tooltip row", () => {
+    // base.hourly.windDirection = (i * 30) % 360 → index 3 is 90° = "E".
+    const opt = buildMeteogramOption({ ...base, series: ["temp", "wind"], panels: ["atmo"] });
+    const fmt = (opt.tooltip as { formatter: (p: unknown) => string }).formatter;
+    const html = fmt([
+      { seriesName: "Wind speed", value: 13, color: "#000", axisValue: base.hourly.time[3], dataIndex: 3 },
+    ]);
+    expect(html).toContain("13 km/h");
+    expect(html).toContain("rotate(0deg)"); // 90° bearing on an east-based glyph → no rotation
+    expect(html).toMatch(/<\/span>\s*E/); // compass point follows the arrow
   });
 
   it("lists tooltip rows in a stable canonical order regardless of param order", () => {

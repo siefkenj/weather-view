@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  interpAngles,
   interpBands,
   interpNullable,
   interpSeries,
@@ -60,6 +61,8 @@ function hourlyWindow(): HourlyPoint {
     cloudCover: zeros.slice(),
     pressure,
     radiation: zeros.slice(),
+    windSpeed: zeros.slice(),
+    windDirection: zeros.slice(),
   };
 }
 
@@ -132,6 +135,33 @@ describe("refineHourlyWindow", () => {
     // Fine block that stops at 06:00 can't cover a full 24h window.
     const short = sliceFine(fine(), "2026-07-22T00:00", "2026-07-22T06:00")!;
     expect(refineHourlyWindow(w, short)).toBeNull();
+  });
+});
+
+describe("interpAngles", () => {
+  it("takes the short way around the compass across the 0/360 wrap", () => {
+    const out = interpAngles(
+      ["2026-07-22T00:00", "2026-07-22T01:00"],
+      [350, 10],
+      ["2026-07-22T00:00", "2026-07-22T00:30", "2026-07-22T01:00"],
+    );
+    expect(out[0]).toBeCloseTo(350);
+    expect(out[1] % 360).toBeCloseTo(0); // midpoint of 350↔10 is 0, not 180
+    expect(out[2]).toBeCloseTo(10);
+  });
+
+  it("interpolates the ordinary case linearly", () => {
+    const out = interpAngles(
+      ["2026-07-22T00:00", "2026-07-22T01:00"],
+      [90, 180],
+      ["2026-07-22T00:30"],
+    );
+    expect(out[0]).toBeCloseTo(135);
+  });
+
+  it("returns NaN past the ends", () => {
+    const out = interpAngles(["2026-07-22T01:00", "2026-07-22T02:00"], [10, 20], ["2026-07-22T00:00"]);
+    expect(Number.isNaN(out[0])).toBe(true);
   });
 });
 

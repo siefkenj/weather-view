@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { buildMeteogramOption } from "./meteogramOption";
+import { buildMeteogramOption, tempPanelVisible } from "./meteogramOption";
 import { ForecastHeader } from "./ForecastHeader";
-import { computeHorizontalLayout, tempTopEmptyFraction } from "./meteogramLayout";
+import { computeHorizontalLayout, tempTopEmptyFraction, TILE_BAND, LAYOUT_TOP_PAD } from "./meteogramLayout";
 import { useECharts } from "../hooks/useECharts";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTheme } from "../hooks/useTheme";
@@ -176,12 +176,22 @@ export function Meteogram({
 
   const resolvedHeight = integrated ? 560 : height;
 
-  // Where the on-graph tiles sit: the empty band at the top of the temp panel.
+  // Whether the temperature panel is laid out (all temp lines off ⇒ it's dropped). Must
+  // match the option builder so the tile overlay lines up with the chart grids.
+  const showTempPanel = tempPanelVisible(series, hidden, effPanels);
+
+  // Where the on-graph tiles sit: the temp panel's empty headroom, or — when there's no
+  // temp panel — the reserved band above the first panel (see TILE_BAND).
   const band = useMemo(() => {
     if (!integrated) return null;
-    const temp = computeHorizontalLayout(effPanels).grids[0];
+    const layout = computeHorizontalLayout(effPanels, {
+      includeTemp: showTempPanel,
+      tileBand: showTempPanel ? 0 : TILE_BAND,
+    });
+    if (!showTempPanel) return { top: LAYOUT_TOP_PAD, height: TILE_BAND };
+    const temp = layout.grids[0];
     return { top: temp.top, height: temp.height * tempTopEmptyFraction() };
-  }, [integrated, effPanels]);
+  }, [integrated, effPanels, showTempPanel]);
 
   return (
     <div className="meteogram-graph" style={{ position: "relative" }}>

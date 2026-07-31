@@ -281,6 +281,13 @@ button {
 .current__meta {
   min-width: 240px;
   flex: 1;
+  /* Stretch to the banner's full height (overriding .current's align-items: center), and
+     be a flex column so the day row can flex-grow into that height (a percentage height
+     wouldn't resolve reliably against a plain block). */
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  margin-top: 1.5em;
 }
 .current__main {
   display: flex;
@@ -310,12 +317,16 @@ button {
   font-weight: 700;
   color: var(--text);
 }
-/* Compact temperature trace over one 2am→2am day, inline among the other indices
-   at ~2× their width: solar-lit background, actual (solid) past vs forecast (faded)
-   future, today's high/low, and a dashed "feels like" line where it diverges. */
+/* Compact temperature trace over one 2am→2am day: solar-lit background, actual (solid)
+   past vs forecast (faded) future, today's high/low, and a dashed "feels like" line
+   where it diverges. Sits to the LEFT of the facts (see .current__day), not among them,
+   so the facts can center on their line without this wide graph skewing the balance. */
 .fact--graph {
-  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
   gap: 2px;
+  width: 176px;
+  flex: none;
 }
 .temp-mini-wrap {
   position: relative;
@@ -411,24 +422,39 @@ button {
 .current__place {
   font-weight: 600;
   color: var(--text-dim);
-  margin-bottom: 6px;
+}
+/* Day row: the mini-graph on the left, the facts filling the space to its right. Wraps
+   the facts under the graph when the meta column gets too narrow. */
+.current__day {
+  /* Grow to fill .current__meta's full height so align-items: center has room to
+     vertically center the facts within the whole banner (not just the graph's height). */
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
 }
 .current__facts {
   list-style: none;
   margin: 0;
   padding: 0;
-  /* Auto-fit grid: columns grow to fill whatever width the meta column has, and
-     items wrap to new rows only when they run out of room. */
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  /* Fill the space to the right of the graph and center on the line, wrapping its OWN
+     items rather than dropping the whole block below the graph. flex-basis MUST be 0
+     (not auto): with auto, the block's max-content basis makes the flex line-breaker wrap
+     it to the next line even when it would fit after shrinking. Basis 0 keeps it on the
+     graph's line and grows it to fill, so the items wrap internally instead. */
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
   gap: 12px 20px;
-  /* Top-align every cell so each row's fact labels sit on one line, even beside
-     the taller mini-graph cell. */
-  align-items: start;
 }
 .current__facts li {
   display: flex;
   flex-direction: column;
+  min-width: 88px;
 }
 .fact-key {
   font-size: 11px;
@@ -438,6 +464,12 @@ button {
 }
 .fact-val {
   font-weight: 600;
+}
+/* Wind bearing arrow: a long arrow glyph rotated (inline style) to the exact
+   direction. inline-block is required for the rotate() transform to apply. */
+.wind-arrow {
+  display: inline-block;
+  line-height: 1;
 }
 
 /* ---------- Controls ---------- */
@@ -627,6 +659,10 @@ button {
   cursor: default;
 }
 .meteogram-nav__range {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-width: 130px;
   padding: 5px 12px;
   border: 1px solid transparent;
@@ -635,7 +671,10 @@ button {
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
-  text-align: center;
+}
+.meteogram-nav__range-icon {
+  font-size: 15px;
+  line-height: 1;
 }
 .meteogram-nav__range:hover:not(:disabled) {
   background: var(--accent-weak);
@@ -959,6 +998,32 @@ button {
   color: var(--text-dim);
   font-weight: 600;
 }
+/* The AQHI number + unit, grouped so the whole thing carries one hover explanation.
+   Re-creates the 6px gap they had as separate flex items of .aqi-number. */
+.aqi-aqhi {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: help;
+}
+/* Secondary US-AQI reading: the number matches the AQHI's size (30px); the parentheses
+   and "AQI" stay small like the AQHI unit. */
+.aqi-alt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: help;
+}
+.aqi-alt__num {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text);
+}
+/* Parentheses: big like the number, but keep the dim colour inherited from .aqi-alt. */
+.aqi-alt__paren {
+  font-size: 30px;
+  font-weight: 700;
+}
 .aqi-graph {
   position: relative;
   margin-top: 6px;
@@ -1129,6 +1194,15 @@ button {
   .current {
     position: static;
     margin-top: 0;
+  }
+  /* Stack the day row on phones: the graph sits centered on top, the facts span the
+     full width below (and stay centered) rather than getting squeezed beside the graph. */
+  .current__day {
+    flex-direction: column;
+    align-items: center;
+  }
+  .current__facts {
+    align-self: stretch;
   }
 }
 
@@ -1490,13 +1564,13 @@ button {
 
 /* ---------- Network status (reserved slot, top-left of the banner) ---------- */
 .status-slot {
-  /* Sits in the banner's naturally-empty top-left header strip, symmetric to the
-     search/settings actions on the right. Absolute, so showing a message never
-     reflows the weather content or the daily forecast below — the space is always
-     set aside for it. Intentionally quiet: a small dot + short dim text. */
+  /* Pinned to the PAGE's left edge (a small gutter), so on very wide pages it stays out
+     in the left margin rather than indenting to the centered content column. Absolute, so
+     showing a message never reflows the weather content or the daily forecast below — the
+     space is always set aside for it. Intentionally quiet: a small dot + short dim text. */
   position: absolute;
   top: 14px;
-  left: max(clamp(12px, 2.4vw, 24px), calc(50vw - 620px));
+  left: clamp(12px, 2.4vw, 24px);
   z-index: 2;
   min-width: 180px;
   max-width: 33%;
@@ -1580,6 +1654,9 @@ button {
   }
   .status-slot:empty {
     display: none;
+  }
+  .current__meta {
+    margin-top: unset;
   }
 }
 

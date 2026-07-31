@@ -10,7 +10,7 @@ import type { AirMode } from "../utils/airColors";
 /** The forecast graph's air-quality panel: off, or showing one of the two indices. */
 export type AirPanelMode = "off" | AirMode;
 
-export type SeriesKey = "temp" | "feels" | "dew" | "wetbulb" | "enthalpy";
+export type SeriesKey = "temp" | "feels" | "dew" | "wetbulb" | "enthalpy" | "wind";
 export type PanelKey = "precip" | "atmo" | "air";
 
 /** Default visible window width, in days. */
@@ -19,7 +19,7 @@ export const DEFAULT_WINDOW_DAYS = 10;
 // The order here is the chip/legend order. The derived series (wet bulb, enthalpy)
 // are selectable but default OFF — see DEFAULTS.series — so the temp panel stays
 // uncluttered until the user opts in.
-export const ALL_SERIES: SeriesKey[] = ["temp", "feels", "dew", "wetbulb", "enthalpy"];
+export const ALL_SERIES: SeriesKey[] = ["temp", "feels", "dew", "wetbulb", "enthalpy", "wind"];
 export const ALL_PANELS: PanelKey[] = ["precip", "atmo", "air"];
 
 const DEFAULT_SERIES: SeriesKey[] = ["temp", "feels"];
