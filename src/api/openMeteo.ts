@@ -208,11 +208,13 @@ export function fetchAirQuality(
   });
 }
 
-export function buildGeocodeUrl(name: string, count = 8): string {
+export function buildGeocodeUrl(name: string, count = 100): string {
   return buildUrl(GEOCODING_URL, { name, count, language: "en", format: "json" });
 }
 
 export function fetchGeocode(name: string, signal?: AbortSignal): Promise<GeocodingResponse> {
   // Not cached: it's per-keystroke and RTK Query already keeps results for a day.
+  // A generous count so a space-qualified query (e.g. "London Ontario") can be filtered
+  // down client-side — the geocoder itself only matches the place name (see useGeocode).
   return fetchJson<GeocodingResponse>(buildGeocodeUrl(name), { label: "search", signal });
 }

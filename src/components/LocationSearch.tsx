@@ -1,10 +1,15 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
 import { useGeocode } from "../hooks/useGeocode";
 import type { GeoLocation, Place } from "../api/types";
 
 interface Props {
   onSelect: (place: Place) => void;
   placeholder?: string;
+}
+
+/** Imperative handle so other header elements (e.g. the place name) can open the box. */
+export interface LocationSearchHandle {
+  open: () => void;
 }
 
 function toPlace(g: GeoLocation): Place {
@@ -35,7 +40,10 @@ const SearchGlyph = () => (
  * expands into a text field on demand and collapses again after a selection or
  * when dismissed. Keeps the weather information as the focus of the header.
  */
-export function LocationSearch({ onSelect, placeholder = "Search for a city…" }: Props) {
+export const LocationSearch = forwardRef<LocationSearchHandle, Props>(function LocationSearch(
+  { onSelect, placeholder = "Search for a city…" },
+  ref,
+) {
   const [expanded, setExpanded] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -43,6 +51,8 @@ export function LocationSearch({ onSelect, placeholder = "Search for a city…" 
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listId = useId();
+
+  useImperativeHandle(ref, () => ({ open: () => setExpanded(true) }), []);
 
   useEffect(() => setActive(0), [results]);
 
@@ -146,4 +156,4 @@ export function LocationSearch({ onSelect, placeholder = "Search for a city…" 
       ) : null}
     </div>
   );
-}
+});

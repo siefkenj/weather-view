@@ -1,8 +1,8 @@
-import type { CSSProperties } from "react";
+import { useRef, type CSSProperties } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { describeWeather } from "../api/weatherCode";
 import { WeatherIcon } from "./WeatherIcon";
-import { LocationSearch } from "./LocationSearch";
+import { LocationSearch, type LocationSearchHandle } from "./LocationSearch";
 import { SettingsMenu } from "./SettingsMenu";
 import { StatusBar } from "./StatusBar";
 import { formatTemp, type Units } from "../utils/units";
@@ -54,6 +54,7 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
   const hasMini = mini && mini.time.length > 1;
   const navigate = useNavigate();
   const location = useLocation();
+  const searchRef = useRef<LocationSearchHandle>(null);
 
   // The card doubles as the app header: switching cities keeps the query string
   // (visible-forecast state) and carries the rich place in router state.
@@ -65,12 +66,19 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
     <section className="current" aria-label="Current conditions">
       <StatusBar />
       <div className="current__actions">
-        <LocationSearch onSelect={goToPlace} />
+        <LocationSearch ref={searchRef} onSelect={goToPlace} />
         <SettingsMenu />
       </div>
       <div className="current__today">
         <div className="current__date">{formatWeekdayLong(current.time)}</div>
-        <div className="current__place">{placeLabel(place)}</div>
+        <button
+          type="button"
+          className="current__place"
+          onClick={() => searchRef.current?.open()}
+          title="Change location"
+        >
+          {placeLabel(place)}
+        </button>
         <div className="current__main">
           <WeatherIcon kind={wx.icon} night={!day} size={84} title={wx.label} />
           <div className="current__temp-block">

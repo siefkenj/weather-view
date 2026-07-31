@@ -5,6 +5,7 @@
 // forecast — and every entry is in the America/Toronto zone.
 
 import type { GeoLocation } from "../api/types";
+import { MIN_QUERY_LENGTH, normalize, tokenize } from "./placeSearch";
 
 interface Curated {
   name: string;
@@ -64,14 +65,15 @@ function toGeoLocation(p: Curated, index: number): GeoLocation {
   };
 }
 
-/** Curated Ontario places whose name/aliases contain every whitespace token of the query. */
+/** Curated Ontario places whose name/aliases contain every token of the query. Shares
+ *  the search box's normalization, so punctuation ("niagara-on-the-lake", "algonquin,
+ *  ontario") and accents tokenize the same way here as for geocoded results. */
 export function curatedMatches(query: string): GeoLocation[] {
-  const q = query.trim().toLowerCase();
-  if (q.length < 2) return [];
-  const tokens = q.split(/\s+/).filter(Boolean);
+  const tokens = tokenize(query);
+  if (normalize(query).length < MIN_QUERY_LENGTH) return [];
   const out: GeoLocation[] = [];
   ONTARIO.forEach((p, i) => {
-    const hay = `${p.name} ontario canada ${(p.aliases ?? []).join(" ")}`.toLowerCase();
+    const hay = normalize(`${p.name} ontario canada on ${(p.aliases ?? []).join(" ")}`);
     if (tokens.every((t) => hay.includes(t))) out.push(toGeoLocation(p, i));
   });
   return out;

@@ -419,9 +419,20 @@ button {
 .temp-mini__lbl--lo {
   fill: var(--lo);
 }
+/* A button, but presents as the plain place-name text; click opens the search box. */
 .current__place {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
   font-weight: 600;
   color: var(--text-dim);
+  cursor: pointer;
+  text-align: left;
+}
+.current__place:hover {
+  color: var(--text);
+  text-decoration: underline;
 }
 /* Day row: the mini-graph on the left, the facts filling the space to its right. Wraps
    the facts under the graph when the meta column gets too narrow. */
@@ -1005,6 +1016,7 @@ button {
   align-items: baseline;
   gap: 6px;
   cursor: help;
+  white-space: nowrap; /* keep the number and its "AQHI" label on one line */
 }
 /* Secondary US-AQI reading: the number matches the AQHI's size (30px); the parentheses
    and "AQI" stay small like the AQHI unit. */
@@ -1013,6 +1025,7 @@ button {
   font-weight: 600;
   color: var(--text-dim);
   cursor: help;
+  white-space: nowrap; /* keep "(53 AQI)" from breaking between the number and label */
 }
 .aqi-alt__num {
   font-size: 30px;
