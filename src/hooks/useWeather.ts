@@ -7,11 +7,14 @@ import { useEffect, useRef, useState } from "react";
 import {
   placeKey,
   useAirQualityQuery,
+  useArchiveQuery,
   useEnsembleQuery,
   useForecastQuery,
   useMinutelyQuery,
+  useStationPrecipQuery,
 } from "../store/openMeteoApi";
 import { MAX_FORECAST_DAYS } from "../api/openMeteo";
+import { addDays, todayInZone } from "../utils/format";
 import type { Place } from "../api/types";
 
 /** How far into the past the full (stage-2) load reaches. */
@@ -43,6 +46,23 @@ function useKeepData<T>(data: T | undefined, isFetching: boolean): T | undefined
   const ref = useRef<T | undefined>(undefined);
   if (data !== undefined) ref.current = data;
   return data ?? (isFetching ? ref.current : undefined);
+}
+
+/** Debounce the chosen model set so ticking several boxes in the picker fires ONE
+ *  consensus request for the final selection, not one per box. The initial value is
+ *  applied immediately (so a shared consensus URL loads without delay); only later
+ *  changes wait. Keyed on the joined ids to avoid array-identity churn. */
+function useDebouncedModels(models: string[] | undefined, ms: number): string[] {
+  const list = models ?? [];
+  const key = list.join(",");
+  const latest = useRef(list);
+  latest.current = list;
+  const [debounced, setDebounced] = useState(list);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(latest.current), ms);
+    return () => clearTimeout(id);
+  }, [key, ms]);
+  return debounced;
 }
 
 export function useForecast(place: Place, options: ForecastOptions) {
@@ -98,12 +118,53 @@ export function useAirQuality(
   return { ...r, data: useKeepData(r.data, r.isFetching) };
 }
 
+/** Observed (ERA5) history for the past window. Historical data is stable, so no
+ *  polling; it revalidates only when the date range rolls over (see forceRefetch). */
+export function useArchive(
+  place: Place,
+  options: { startDate: string; endDate: string; enabled: boolean },
+) {
+  const r = useArchiveQuery(
+    {
+      latitude: place.latitude,
+      longitude: place.longitude,
+      timezone: place.timezone,
+      startDate: options.startDate,
+      endDate: options.endDate,
+    },
+    { skip: !options.enabled },
+  );
+  return { ...r, data: useKeepData(r.data, r.isFetching) };
+}
+
+/** Measured rain-gauge precipitation for the past (ECCC nearest station; Canada only).
+ *  Refetches daily as observations publish; empty elsewhere. Needs a real IANA `timezone`
+ *  (to align the gauge's UTC stamps to the local grid) — the forecast response supplies
+ *  it even when the Place from a URL slug doesn't. */
+export function useStationPrecip(
+  place: Place,
+  options: { day: string; enabled: boolean; timezone?: string },
+) {
+  const r = useStationPrecipQuery(
+    {
+      latitude: place.latitude,
+      longitude: place.longitude,
+      timezone: options.timezone ?? place.timezone,
+      day: options.day,
+    },
+    { skip: !options.enabled },
+  );
+  return { ...r, data: useKeepData(r.data, r.isFetching) };
+}
+
 /** Air quality reaches ~7 days out on Open-Meteo. */
 const AIR_FORECAST_DAYS = 7;
 
 interface LocationOptions {
   ci?: boolean;
   air?: boolean;
+  /** Models to blend into a consensus; empty = best_match (see utils/consensus). */
+  extraModels?: string[];
   /** Days to fetch forward/back on the FIRST (fast) load — the visible window. */
   initialForecastDays?: number;
   initialPastDays?: number;
@@ -128,12 +189,20 @@ export function useLocationWeather(place: Place, options: LocationOptions = {}) 
     ? MAX_FORECAST_DAYS
     : Math.min(MAX_FORECAST_DAYS, options.initialForecastDays ?? MAX_FORECAST_DAYS);
   const pastDays = loadFull ? FULL_PAST_DAYS : Math.min(FULL_PAST_DAYS, options.initialPastDays ?? 0);
-  const forecast = useForecast(place, { forecastDays, pastDays });
+  const extraModels = useDebouncedModels(options.extraModels, 350);
+  const forecast = useForecast(place, { forecastDays, pastDays, extraModels });
 
   // Expand to the full range once the visible window has painted.
   useEffect(() => {
     if (!loadFull && forecast.data) setLoadFull(true);
   }, [loadFull, forecast.data]);
+
+  // Observed history covering the same past window the forecast loads (stage 2). Only
+  // fetched once the full range is loaded — the observed past isn't visible before then.
+  // Prefer the forecast's resolved IANA zone (a Place from a URL slug may lack one).
+  const zone = forecast.data?.timezone ?? place.timezone;
+  const endDate = todayInZone(zone);
+  const startDate = addDays(endDate, -FULL_PAST_DAYS);
 
   return {
     key: placeKey({ latitude: place.latitude, longitude: place.longitude }),
@@ -145,5 +214,7 @@ export function useLocationWeather(place: Place, options: LocationOptions = {}) 
       pastDays: FULL_PAST_DAYS,
       enabled: !!options.air,
     }),
+    archive: useArchive(place, { startDate, endDate, enabled: loadFull }),
+    stationPrecip: useStationPrecip(place, { day: endDate, enabled: loadFull, timezone: zone }),
   };
 }

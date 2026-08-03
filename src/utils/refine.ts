@@ -115,12 +115,34 @@ export function sliceFine(fine: FineSamples, startIso: string, endIso: string): 
   return out.time.length > 1 ? out : null;
 }
 
+/** Spread each observed hourly precipitation total evenly across the four 15-minute
+ *  buckets of its hour. Precip is an accumulation, so a bucket holds a quarter-hour's
+ *  worth — NOT the linear interpolation used for instantaneous channels (that would
+ *  make past bars ~4× too tall and misread mm/h). NaN where the hour has no total. */
+function quarterHourPrecip(window: HourlyPoint, refinedTime: string[]): number[] {
+  const hourly = new Map<string, number>();
+  for (let i = 0; i < window.time.length; i++) hourly.set(window.time[i].slice(0, 13), window.precipitation[i]);
+  return refinedTime.map((t) => {
+    const p = hourly.get(t.slice(0, 13));
+    return typeof p === "number" && Number.isFinite(p) ? p / 4 : NaN;
+  });
+}
+
 /**
  * Rebuild an hourly window on the 15-minute grid: native temperature / apparent /
  * precipitation from `fine`, every other channel interpolated from `window`.
  * Returns null (→ caller keeps the hourly window) if `fine` doesn't span it.
+ *
+ * When `nowIso` is given, the PAST (`< nowIso`) takes its temperature/apparent/precip
+ * from the (observed) hourly `window` instead of the model's `fine` samples — so
+ * zooming in never re-introduces forecast data before "now". Omitted → all points are
+ * treated as future (native `fine` everywhere), the original behaviour.
  */
-export function refineHourlyWindow(window: HourlyPoint, fine: FineSamples): HourlyPoint | null {
+export function refineHourlyWindow(
+  window: HourlyPoint,
+  fine: FineSamples,
+  nowIso?: string,
+): HourlyPoint | null {
   const wn = window.time.length;
   if (wn < 2) return null;
   const startIso = window.time[0];
@@ -136,14 +158,21 @@ export function refineHourlyWindow(window: HourlyPoint, fine: FineSamples): Hour
   if (idx.length < 2) return null;
 
   const time = idx.map((i) => fine.time[i]);
-  const at = (arr: number[]) => idx.map((i) => arr[i]);
   const interp = (arr: number[]) => interpSeries(window.time, arr, time);
+
+  // Past uses observed hourly (resampled); future uses the native 15-min model samples.
+  const isPast = (t: string) => nowIso != null && t < nowIso;
+  const obsTemp = interpSeries(window.time, window.temperature, time);
+  const obsApp = interpSeries(window.time, window.apparent, time);
+  const obsPrecip = quarterHourPrecip(window, time);
+  const native = (fineArr: number[], obs: number[]) =>
+    time.map((t, k) => (isPast(t) ? obs[k] : fineArr[idx[k]]));
 
   return {
     time,
-    temperature: at(fine.temperature),
-    apparent: at(fine.apparent),
-    precipitation: at(fine.precipitation),
+    temperature: native(fine.temperature, obsTemp),
+    apparent: native(fine.apparent, obsApp),
+    precipitation: native(fine.precipitation, obsPrecip),
     dewPoint: interp(window.dewPoint),
     precipProbability: interp(window.precipProbability),
     humidity: interp(window.humidity),

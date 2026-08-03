@@ -2,7 +2,7 @@ import { useRef } from "react";
 import { describeWeather } from "../api/weatherCode";
 import { WeatherIcon } from "./WeatherIcon";
 import { formatFullDate, formatMonthDay, formatWeekday, parseLocal } from "../utils/format";
-import { formatPrecip, formatTemp, type Units } from "../utils/units";
+import { formatPrecip, formatTemp, roundOrDash, type Units } from "../utils/units";
 import { aqhiCategory, formatAqhi } from "../utils/aqhi";
 import { aqiColor, type AirMode } from "../api/airQualityGrid";
 import { useAppDispatch, useAppSelector } from "../store";
@@ -140,9 +140,9 @@ export function ForecastHeader({
           <div className="forecast-card__grid">
             <Fact k="High" v={formatTemp(active.tempMax, units)} />
             <Fact k="Low" v={formatTemp(active.tempMin, units)} />
-            <Fact k="Chance" v={`${Math.round(active.precipProbMax ?? 0)}%`} />
+            <Fact k="Chance" v={roundOrDash(active.precipProbMax, "%")} />
             <Fact k="Precip" v={formatPrecip(active.precipSum)} />
-            <Fact k="UV max" v={String(Math.round(active.uvMax ?? 0))} />
+            <Fact k="UV max" v={roundOrDash(active.uvMax)} />
             <Fact k={airIndex === "aqi" ? "AQI" : "AQHI"} v={activeAir.text} color={activeAir.color} />
           </div>
         </div>

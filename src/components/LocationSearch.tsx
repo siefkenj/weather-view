@@ -1,15 +1,27 @@
-import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useGeocode } from "../hooks/useGeocode";
+import { placeToSlug } from "../utils/place";
+import { getRecentPlaces } from "../utils/recentPlaces";
 import type { GeoLocation, Place } from "../api/types";
 
 interface Props {
   onSelect: (place: Place) => void;
+  /** Slug of the currently-shown place, hidden from the recents list (you're on it). */
+  currentKey?: string;
   placeholder?: string;
 }
 
 /** Imperative handle so other header elements (e.g. the place name) can open the box. */
 export interface LocationSearchHandle {
   open: () => void;
+}
+
+/** A normalized dropdown row — from either a geocoding hit or a stored recent. */
+interface Suggestion {
+  key: string;
+  name: string;
+  sub: string;
+  place: Place;
 }
 
 function toPlace(g: GeoLocation): Place {
@@ -24,8 +36,13 @@ function toPlace(g: GeoLocation): Place {
   };
 }
 
-function subtitle(g: GeoLocation): string {
+function geoSub(g: GeoLocation): string {
   return [g.admin1, g.country].filter(Boolean).join(", ");
+}
+
+function placeSub(p: Place): string {
+  const region = [p.admin1, p.country].filter(Boolean).join(", ");
+  return region || `${p.latitude.toFixed(2)}, ${p.longitude.toFixed(2)}`;
 }
 
 const SearchGlyph = () => (
@@ -39,14 +56,18 @@ const SearchGlyph = () => (
  * Collapsed by default (just a search icon) since switching cities is rare;
  * expands into a text field on demand and collapses again after a selection or
  * when dismissed. Keeps the weather information as the focus of the header.
+ *
+ * On open with an empty query it offers the 5 most recently-viewed locations
+ * (persisted in localStorage); once the user types, it switches to live geocoding.
  */
 export const LocationSearch = forwardRef<LocationSearchHandle, Props>(function LocationSearch(
-  { onSelect, placeholder = "Search for a city…" },
+  { onSelect, currentKey, placeholder = "Search for a city…" },
   ref,
 ) {
   const [expanded, setExpanded] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [recents, setRecents] = useState<Place[]>([]);
   const { results, isLoading, isActive } = useGeocode(query);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -54,7 +75,28 @@ export const LocationSearch = forwardRef<LocationSearchHandle, Props>(function L
 
   useImperativeHandle(ref, () => ({ open: () => setExpanded(true) }), []);
 
-  useEffect(() => setActive(0), [results]);
+  const trimmed = query.trim();
+  const showRecents = trimmed === "";
+
+  // Refresh recents from storage each time the box opens (they change as you navigate).
+  useEffect(() => {
+    if (expanded) setRecents(getRecentPlaces());
+  }, [expanded]);
+
+  // Drop the place you're already viewing, then keep the 5 most recent.
+  const recentPlaces = useMemo(
+    () => recents.filter((p) => placeToSlug(p) !== currentKey).slice(0, 5),
+    [recents, currentKey],
+  );
+
+  const suggestions = useMemo<Suggestion[]>(() => {
+    if (showRecents) {
+      return recentPlaces.map((p) => ({ key: placeToSlug(p), name: p.name, sub: placeSub(p), place: p }));
+    }
+    return results.map((g) => ({ key: String(g.id), name: g.name, sub: geoSub(g), place: toPlace(g) }));
+  }, [showRecents, recentPlaces, results]);
+
+  useEffect(() => setActive(0), [suggestions]);
 
   useEffect(() => {
     if (expanded) inputRef.current?.focus();
@@ -73,8 +115,8 @@ export const LocationSearch = forwardRef<LocationSearchHandle, Props>(function L
     setQuery("");
   }
 
-  function choose(g: GeoLocation) {
-    onSelect(toPlace(g));
+  function choose(place: Place) {
+    onSelect(place);
     collapse();
   }
 
@@ -83,16 +125,16 @@ export const LocationSearch = forwardRef<LocationSearchHandle, Props>(function L
       collapse();
       return;
     }
-    if (results.length === 0) return;
+    if (suggestions.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((a) => Math.min(a + 1, results.length - 1));
+      setActive((a) => Math.min(a + 1, suggestions.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActive((a) => Math.max(a - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      choose(results[active]);
+      choose(suggestions[active].place);
     }
   }
 
@@ -111,7 +153,22 @@ export const LocationSearch = forwardRef<LocationSearchHandle, Props>(function L
     );
   }
 
-  const showList = isActive;
+  // Recents show whenever the field is empty and we have some; otherwise the live search.
+  const showList = showRecents ? recentPlaces.length > 0 : isActive;
+
+  const renderItem = (s: Suggestion, idx: number) => (
+    <li key={s.key} role="option" aria-selected={idx === active}>
+      <button
+        type="button"
+        className={"location-search__item" + (idx === active ? " is-active" : "")}
+        onMouseEnter={() => setActive(idx)}
+        onClick={() => choose(s.place)}
+      >
+        <span className="location-search__name">{s.name}</span>
+        <span className="location-search__sub">{s.sub}</span>
+      </button>
+    </li>
+  );
 
   return (
     <div className="location-search location-search--expanded" ref={rootRef}>
@@ -133,24 +190,19 @@ export const LocationSearch = forwardRef<LocationSearchHandle, Props>(function L
       />
       {showList ? (
         <ul className="location-search__list" id={listId} role="listbox">
-          {isLoading && results.length === 0 ? (
+          {showRecents ? (
+            <>
+              <li className="location-search__section" role="presentation">
+                Recent
+              </li>
+              {suggestions.map(renderItem)}
+            </>
+          ) : isLoading && results.length === 0 ? (
             <li className="location-search__empty">Searching…</li>
           ) : results.length === 0 ? (
             <li className="location-search__empty">No matches</li>
           ) : (
-            results.map((g, idx) => (
-              <li key={g.id} role="option" aria-selected={idx === active}>
-                <button
-                  type="button"
-                  className={"location-search__item" + (idx === active ? " is-active" : "")}
-                  onMouseEnter={() => setActive(idx)}
-                  onClick={() => choose(g)}
-                >
-                  <span className="location-search__name">{g.name}</span>
-                  <span className="location-search__sub">{subtitle(g)}</span>
-                </button>
-              </li>
-            ))
+            suggestions.map(renderItem)
           )}
         </ul>
       ) : null}

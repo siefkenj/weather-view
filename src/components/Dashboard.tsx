@@ -23,10 +23,12 @@ import {
 import {
   interpBands,
   interpNullable,
+  interpSeries,
   refineHourlyWindow,
   sliceFine,
   toFineSamples,
 } from "../utils/refine";
+import { archiveDailySummaries, mergeObservedDaily, mergeObservedHourly } from "../utils/observed";
 import { addDays, dayKey, parseLocal, todayInZone } from "../utils/format";
 import { arrowTarget, clampStartIso, shiftStart } from "../utils/pan";
 import { computeAqhiSeries } from "../utils/aqhi";
@@ -132,20 +134,46 @@ export function Dashboard({ place }: { place: Place }) {
   // Each field is an independent RTK Query result (own data/loading/error); the
   // forecast loads in two stages (visible window first, then the whole range).
   // `ci`/`air` gate the two optional sources.
-  const wx = useLocationWeather(place, { ci: ciEnabled, air: airEnabled, ...initial });
+  const wx = useLocationWeather(place, {
+    ci: ciEnabled,
+    air: airEnabled,
+    extraModels: state.extraModels,
+    ...initial,
+  });
   const forecastQ = wx.forecast;
   const ensembleQ = wx.ensemble;
   const airQ = wx.airQuality;
   const minutelyQ = wx.minutely;
+  const archiveQ = wx.archive;
+  const stationPrecipQ = wx.stationPrecip;
 
   const forecast = forecastQ.data;
+  const archive = archiveQ.data;
+  const gaugePrecip = stationPrecipQ.data?.precipByIso;
   const fine = useMemo(
     () => (minutelyQ.data ? toFineSamples(minutelyQ.data.minutely_15) : null),
     [minutelyQ.data],
   );
 
-  const full = useMemo(() => (forecast ? extractHourly(forecast) : null), [forecast]);
-  const summaries = useMemo(() => (forecast ? dailySummaries(forecast) : []), [forecast]);
+  // The whole-range hourly block, with the PAST overwritten by observed (ERA5) data so
+  // the past is never model forecast. The merge is by timestamp (a mismatched archive
+  // simply doesn't apply), and the location is fixed for this Dashboard mount.
+  const full = useMemo(() => {
+    if (!forecast) return null;
+    const base = extractHourly(forecast);
+    // Past precip prefers the real rain gauge (gaugePrecip) over ERA5; both are past-only.
+    return archive
+      ? mergeObservedHourly(base, archive.hourly, forecast.current.time, gaugePrecip)
+      : base;
+  }, [forecast, archive, gaugePrecip]);
+  // Prior days come from the observed record; today (partly future) stays forecast.
+  const summaries = useMemo(() => {
+    if (!forecast) return [];
+    const base = dailySummaries(forecast);
+    return archive
+      ? mergeObservedDaily(base, archiveDailySummaries(archive), dayKey(forecast.current.time))
+      : base;
+  }, [forecast, archive]);
   const todayKey = forecast ? dayKey(forecast.current.time) : "";
 
   // Resolve the window's left edge (a continuous datetime) against the data we have,
@@ -176,8 +204,9 @@ export function Dashboard({ place }: { place: Place }) {
   const chartHourly: HourlyPoint | null = useMemo(() => {
     if (!hourly) return null;
     if (windowDays > REFINE_MAX_DAYS || !fine) return hourly;
-    return refineHourlyWindow(hourly, fine) ?? hourly;
-  }, [hourly, windowDays, fine]);
+    // Pass "now" so the refined past keeps observed values instead of model 15-min.
+    return refineHourlyWindow(hourly, fine, forecast?.current.time) ?? hourly;
+  }, [hourly, windowDays, fine, forecast]);
   const refined = !!chartHourly && !!hourly && chartHourly !== hourly;
 
   const tempBand = useMemo(() => {
@@ -254,7 +283,13 @@ export function Dashboard({ place }: { place: Place }) {
     let apparent: number[] = [];
     const slice = fine ? sliceFine(fine, start, end) : null;
     if (slice) {
-      ({ time, temperature, apparent } = slice);
+      // Uniform 15-min grid, but the past ("actual" solid line) comes from the observed
+      // `full`, not the model's 15-min samples — so it's never forecast before now.
+      time = slice.time;
+      const obsTemp = interpSeries(full.time, full.temperature, slice.time);
+      const obsApp = interpSeries(full.time, full.apparent, slice.time);
+      temperature = slice.time.map((t, k) => (t < nowIsoTime ? obsTemp[k] : slice.temperature[k]));
+      apparent = slice.time.map((t, k) => (t < nowIsoTime ? obsApp[k] : slice.apparent[k]));
     } else {
       for (let i = 0; i < full.time.length; i++) {
         const t = full.time[i];
@@ -449,6 +484,7 @@ export function Dashboard({ place }: { place: Place }) {
         aqhi={currentAqhi}
         aqi={currentAqi}
         mini={miniWindow}
+        consensus={forecast.consensus}
       />
 
       <div className="panel meteogram-panel meteogram-panel--forecast">

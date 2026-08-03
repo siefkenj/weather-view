@@ -1,18 +1,20 @@
-import { useRef, type CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { describeWeather } from "../api/weatherCode";
 import { WeatherIcon } from "./WeatherIcon";
 import { LocationSearch, type LocationSearchHandle } from "./LocationSearch";
 import { SettingsMenu } from "./SettingsMenu";
 import { StatusBar } from "./StatusBar";
-import { formatTemp, type Units } from "../utils/units";
+import { formatTemp, roundOrDash, type Units } from "../utils/units";
 import { dayKey, formatTime, formatWeekdayLong, parseLocal } from "../utils/format";
 import { aqhiCategory, formatAqhi } from "../utils/aqhi";
 import { formatWindSpeed, windCompass } from "../utils/wind";
 import { WindArrow } from "./WindArrow";
 import { isDaytime, type DailySummary } from "../utils/series";
-import type { ForecastCurrent, Place } from "../api/types";
+import type { ConsensusMeta, ForecastCurrent, Place } from "../api/types";
+import { modelLabel } from "../utils/models";
 import { placeLabel, placeToSlug } from "../utils/place";
+import { addRecentPlace } from "../utils/recentPlaces";
 
 interface Props {
   place: Place;
@@ -21,6 +23,8 @@ interface Props {
   units: Units;
   aqhi?: number | null;
   aqi?: number | null;
+  /** Present when the forecast is a multi-model blend — drives the "consensus" note. */
+  consensus?: ConsensusMeta;
   /** Hourly data across one 2am→2am weather day for the mini graph (°C). `dayKey`
    *  is the day the high/low markers belong to; sunrise/sunset drive the shading. */
   mini?: {
@@ -45,8 +49,12 @@ function formatRain(mm: number | null | undefined, chance: number | null | undef
   return `${a}mm (${pct}%)`;
 }
 
-export function CurrentConditions({ place, current, today, units, aqhi, aqi, mini }: Props) {
-  const wx = describeWeather(current.weather_code);
+export function CurrentConditions({ place, current, today, units, aqhi, aqi, mini, consensus }: Props) {
+  // The headline condition summarizes the whole of today (matching the forecast
+  // strip's "Today" tile), not the current instant — so a dry gap between showers
+  // still reads as a rainy day. Temperature and feels-like below stay live. Falls
+  // back to the current code until the daily summary has loaded.
+  const wx = describeWeather(today?.code ?? current.weather_code);
   const day = isDaytime(current.time, today?.sunrise, today?.sunset);
   const cat = aqhi != null && Number.isFinite(aqhi) ? aqhiCategory(aqhi) : null;
   const hasAir =
@@ -55,6 +63,15 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
   const navigate = useNavigate();
   const location = useLocation();
   const searchRef = useRef<LocationSearchHandle>(null);
+  const currentKey = placeToSlug(place);
+
+  // Remember every viewed location (not just search-picked ones — this also covers the
+  // default city and links opened by URL) so the search box can offer recents on click.
+  useEffect(() => {
+    addRecentPlace(place);
+    // Keyed on the slug so we record once per distinct location, not on every re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentKey]);
 
   // The card doubles as the app header: switching cities keeps the query string
   // (visible-forecast state) and carries the rich place in router state.
@@ -66,7 +83,7 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
     <section className="current" aria-label="Current conditions">
       <StatusBar />
       <div className="current__actions">
-        <LocationSearch ref={searchRef} onSelect={goToPlace} />
+        <LocationSearch ref={searchRef} onSelect={goToPlace} currentKey={currentKey} />
         <SettingsMenu />
       </div>
       <div className="current__today">
@@ -85,6 +102,7 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
             <div className="current__temp">{formatTemp(current.temperature_2m, units, 0)}</div>
             <div className="current__label">{wx.label}</div>
             <div className="current__feels">Feels like {formatTemp(current.apparent_temperature, units, 0)}</div>
+            {consensus ? <ConsensusNote consensus={consensus} /> : null}
           </div>
         </div>
       </div>
@@ -112,7 +130,7 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
             <ul className="current__facts">
             <li>
               <span className="fact-key">UV max</span>
-              <span className="fact-val">{Math.round(today.uvMax ?? 0)}</span>
+              <span className="fact-val">{roundOrDash(today.uvMax)}</span>
             </li>
             <li>
               <span className="fact-key">Rain</span>
@@ -156,6 +174,23 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
         ) : null}
       </div>
     </section>
+  );
+}
+
+/** A small note under the condition label when the forecast blends several models,
+ *  explaining how today was decided — e.g. "Consensus of 6 models · 4 of 6 show a
+ *  wet day". */
+function ConsensusNote({ consensus }: { consensus: ConsensusMeta }) {
+  const { models, wet, agree, total } = consensus;
+  const verb = wet ? "show a wet day" : "show a dry day";
+  const vote = total > 0 ? ` · ${agree} of ${total} ${verb}` : "";
+  return (
+    <div
+      className="current__consensus"
+      title={`Blended from ${models.length} models: ${models.map(modelLabel).join(", ")}.`}
+    >
+      Consensus of {models.length} models{vote}
+    </div>
   );
 }
 

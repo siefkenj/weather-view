@@ -6,7 +6,10 @@
 // Keying is standardized: EVERY weather endpoint caches one entry per location,
 // keyed by a single `lon,lat` string (see `placeKey` + `byLocation`), so the store
 // reads uniformly as `openMeteoApi.queries['<endpoint>(lon,lat)']` regardless of
-// source. The per-source separation (forecast / minutely / ensemble / airQuality)
+// source. (The forecast endpoint additionally partitions by the selected model set —
+// `forecast(lon,lat|modelA,modelB)` — since a consensus blend is different data, not
+// a wider range of the same entry; the bare form is kept when no models are chosen.)
+// The per-source separation (forecast / minutely / ensemble / airQuality)
 // is deliberate — see the note below — and the grouped, per-location view is
 // assembled at read time by useLocationWeather (hooks/useWeather.ts).
 //
@@ -30,14 +33,17 @@
 import { createApi, fakeBaseQuery } from "@reduxjs/toolkit/query/react";
 import {
   fetchAirQuality,
+  fetchArchive,
   fetchEnsemble,
   fetchForecast,
   fetchGeocode,
   fetchMinutely,
 } from "../api/openMeteo";
 import { fetchRadarFrames, type RadarIndex } from "../api/rainviewer";
+import { fetchStationPrecip, type StationPrecip } from "../api/eccc";
 import type {
   AirQualityResponse,
+  ArchiveResponse,
   EnsembleResponse,
   ForecastResponse,
   GeocodingResponse,
@@ -60,6 +66,15 @@ export interface EnsembleArg extends PlaceArg {
 export interface AirQualityArg extends PlaceArg {
   forecastDays: number;
   pastDays: number;
+}
+export interface ArchiveArg extends PlaceArg {
+  /** Inclusive local dates "YYYY-MM-DD". */
+  startDate: string;
+  endDate: string;
+}
+export interface StationPrecipArg extends PlaceArg {
+  /** Today's local date "YYYY-MM-DD"; keeps the daily-refreshing gauge data fresh. */
+  day: string;
 }
 
 export interface QueryError {
@@ -125,11 +140,18 @@ export const openMeteoApi = createApi({
             ),
           api.signal,
         ),
-      // Keyed on location; range lives outside the key (see file header).
-      serializeQueryArgs: byLocation<ForecastArg>(),
-      forceRefetch: refetchOnRange(
-        (a: ForecastArg) => `${a.forecastDays}:${a.pastDays}:${(a.extraModels ?? []).join(",")}`,
-      ),
+      // Keyed on location AND the chosen model set: a different blend is different
+      // data (no merging across model sets), so it gets its own entry and refetches
+      // natively on selection change — unlike the range, which legitimately expands
+      // one entry and so stays outside the key (forceRefetch). The key stays the bare
+      // `forecast(lon,lat)` when no models are chosen (the default), and the set is
+      // sorted so the same models in any order share one entry.
+      serializeQueryArgs: ({ queryArgs, endpointName }) => {
+        const models = (queryArgs.extraModels ?? []).filter(Boolean);
+        const suffix = models.length ? `|${[...models].sort().join(",")}` : "";
+        return `${endpointName}(${placeKey(queryArgs)}${suffix})`;
+      },
+      forceRefetch: refetchOnRange((a: ForecastArg) => `${a.forecastDays}:${a.pastDays}`),
     }),
     minutely: build.query<MinutelyResponse, PlaceArg>({
       queryFn: (arg, api) =>
@@ -180,6 +202,42 @@ export const openMeteoApi = createApi({
       serializeQueryArgs: byLocation<AirQualityArg>(),
       forceRefetch: refetchOnRange((a: AirQualityArg) => `${a.forecastDays}:${a.pastDays}`),
     }),
+    // Observed history (ERA5). One entry per location; the date range lives outside
+    // the key so a midnight rollover refetches into the same entry (forceRefetch).
+    archive: build.query<ArchiveResponse, ArchiveArg>({
+      queryFn: (arg, api) =>
+        run(
+          (signal) =>
+            fetchArchive(
+              {
+                latitude: arg.latitude,
+                longitude: arg.longitude,
+                timezone: arg.timezone,
+                startDate: arg.startDate,
+                endDate: arg.endDate,
+              },
+              signal,
+            ),
+          api.signal,
+        ),
+      serializeQueryArgs: byLocation<ArchiveArg>(),
+      forceRefetch: refetchOnRange((a: ArchiveArg) => `${a.startDate}:${a.endDate}`),
+    }),
+    // Observed rain-gauge precipitation (ECCC, nearest active hourly station). One
+    // entry per location; refetches daily as new observations publish.
+    stationPrecip: build.query<StationPrecip, StationPrecipArg>({
+      queryFn: (arg, api) =>
+        run(
+          (signal) =>
+            fetchStationPrecip(
+              { latitude: arg.latitude, longitude: arg.longitude, timezone: arg.timezone },
+              signal,
+            ),
+          api.signal,
+        ),
+      serializeQueryArgs: byLocation<StationPrecipArg>(),
+      forceRefetch: refetchOnRange((a: StationPrecipArg) => a.day),
+    }),
     geocode: build.query<GeocodingResponse, string>({
       queryFn: (name, api) => run((signal) => fetchGeocode(name, signal), api.signal),
       keepUnusedDataFor: 24 * 60 * 60, // geocoding rarely changes
@@ -198,6 +256,8 @@ export const {
   useMinutelyQuery,
   useEnsembleQuery,
   useAirQualityQuery,
+  useArchiveQuery,
+  useStationPrecipQuery,
   useGeocodeQuery,
   useRadarFramesQuery,
 } = openMeteoApi;

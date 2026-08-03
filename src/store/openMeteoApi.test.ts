@@ -22,15 +22,21 @@ describe("openMeteoApi cache keys", () => {
     store.dispatch(openMeteoApi.endpoints.minutely.initiate(place));
     store.dispatch(openMeteoApi.endpoints.ensemble.initiate({ ...place, forecastDays: 16 }));
     store.dispatch(openMeteoApi.endpoints.airQuality.initiate({ ...place, forecastDays: 7, pastDays: 92 }));
+    store.dispatch(
+      openMeteoApi.endpoints.archive.initiate({ ...place, startDate: "2026-07-14", endDate: "2026-08-03" }),
+    );
+    store.dispatch(openMeteoApi.endpoints.stationPrecip.initiate({ ...place, day: "2026-08-03" }));
 
     // The cache entry keys are created synchronously on dispatch (pending state).
     const keys = Object.keys(store.getState().openMeteoApi.queries);
     expect(keys.sort()).toEqual(
       [
         "airQuality(-79.3986,43.7064)",
+        "archive(-79.3986,43.7064)",
         "ensemble(-79.3986,43.7064)",
         "forecast(-79.3986,43.7064)",
         "minutely(-79.3986,43.7064)",
+        "stationPrecip(-79.3986,43.7064)",
       ].sort(),
     );
   });

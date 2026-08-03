@@ -136,6 +136,36 @@ describe("refineHourlyWindow", () => {
     const short = sliceFine(fine(), "2026-07-22T00:00", "2026-07-22T06:00")!;
     expect(refineHourlyWindow(w, short)).toBeNull();
   });
+
+  it("with nowIso, draws the past from observed hourly (not model 15-min)", () => {
+    const w = hourlyWindow();
+    // Make the observed hourly clearly distinct from the fine samples.
+    for (let h = 0; h < 24; h++) {
+      w.temperature[h] = 100 + h;
+      w.apparent[h] = 90 + h;
+      w.precipitation[h] = h === 2 ? 8 : 0; // 8 mm accumulated during hour 2
+    }
+    const refined = refineHourlyWindow(w, fine(), "2026-07-22T12:00")!;
+    const at = (t: string) => refined.time.indexOf(t);
+
+    // Past (< 12:00): observed hourly, resampled onto the 15-min grid.
+    expect(refined.temperature[at("2026-07-22T02:15")]).toBeCloseTo(102.25);
+    expect(refined.apparent[at("2026-07-22T02:15")]).toBeCloseTo(92.25);
+    // Precip is an accumulation: hour 2's 8 mm splits into 4 × 2 mm buckets…
+    for (const q of ["00", "15", "30", "45"]) {
+      expect(refined.precipitation[at(`2026-07-22T02:${q}`)]).toBeCloseTo(2);
+    }
+    // …which sum back to the hourly total (not 4× it, as interpolation would give).
+    const sum = ["00", "15", "30", "45"].reduce(
+      (s, q) => s + refined.precipitation[at(`2026-07-22T02:${q}`)],
+      0,
+    );
+    expect(sum).toBeCloseTo(8);
+
+    // Future (≥ 12:00): native model 15-min. 13:00 → fine (10 + 13 = 23), not observed 113.
+    expect(refined.temperature[at("2026-07-22T13:00")]).toBeCloseTo(23);
+    expect(refined.precipitation[at("2026-07-22T13:00")]).toBeCloseTo(0.4);
+  });
 });
 
 describe("interpAngles", () => {

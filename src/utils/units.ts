@@ -21,3 +21,10 @@ export function formatPrecip(mm: number | null | undefined): string {
   const digits = mm < 1 ? 2 : 1;
   return `${mm.toFixed(digits)} ${PRECIP_UNIT}`;
 }
+
+/** Rounded integer + optional suffix, or "–" when the value is missing/non-finite:
+ *  UV index for models that don't report it, or precip-chance/UV on observed past
+ *  days (unmeasurable, so they arrive as null/NaN). */
+export function roundOrDash(v: number | null | undefined, suffix = ""): string {
+  return v != null && Number.isFinite(v) ? `${Math.round(v)}${suffix}` : "–";
+}

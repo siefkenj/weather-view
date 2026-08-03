@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { LayerControls } from "./LayerControls";
+import { ModelPicker } from "./ModelPicker";
 import { WeatherIcon } from "./WeatherIcon";
 import { useDashboardState } from "../hooks/useUrlState";
 import { useTheme } from "../hooks/useTheme";
@@ -103,6 +104,11 @@ export function SettingsMenu() {
               setCi={controls.setCi}
               setUnits={controls.setUnits}
             />
+          </div>
+
+          <div className="settings__section">
+            <span className="settings__heading">Models</span>
+            <ModelPicker selected={state.extraModels} onChange={controls.setExtraModels} />
           </div>
 
           <div className="settings__section">

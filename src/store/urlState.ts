@@ -4,6 +4,7 @@
 // slice, the URL<->store sync glue, and the tests all share one implementation.
 
 import { MAX_FORECAST_DAYS } from "../api/openMeteo";
+import { MODEL_IDS } from "../utils/models";
 import type { Units } from "../utils/units";
 import type { AirMode } from "../utils/airColors";
 
@@ -89,7 +90,7 @@ export function parseState(params: URLSearchParams): DashboardState {
     ? modelsRaw
         .split(",")
         .map((s) => s.trim())
-        .filter(Boolean)
+        .filter((s) => MODEL_IDS.has(s))
     : DEFAULTS.extraModels;
 
   const units: Units = params.get("units") === "imperial" ? "imperial" : "metric";

@@ -3,8 +3,10 @@
 // run directly from the browser on GitHub Pages with no proxy.
 
 import { fetchJson } from "./http";
+import { buildConsensus, type RawMultiForecast } from "../utils/consensus";
 import type {
   AirQualityResponse,
+  ArchiveResponse,
   EnsembleResponse,
   ForecastResponse,
   GeocodingResponse,
@@ -14,6 +16,7 @@ import type {
 const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
 const ENSEMBLE_URL = "https://ensemble-api.open-meteo.com/v1/ensemble";
 const AIR_QUALITY_URL = "https://air-quality-api.open-meteo.com/v1/air-quality";
+const ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive";
 const GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
 
 export const MAX_FORECAST_DAYS = 16;
@@ -22,6 +25,7 @@ export const MAX_PAST_DAYS = 92;
 export const ENSEMBLE_MODEL = "ecmwf_ifs025";
 
 export const HOURLY_VARS = [
+  "weather_code",
   "temperature_2m",
   "apparent_temperature",
   "dew_point_2m",
@@ -68,6 +72,19 @@ export const AIR_QUALITY_VARS = [
   "uv_index",
 ] as const;
 
+// The observed (archive/ERA5) variables — the forecast vars minus the ones that
+// aren't observable: `precipitation_probability` (a probability is a forecast, not a
+// measurement) and `weather_code` (not consumed at hourly resolution). Derived so
+// they track HOURLY_VARS/DAILY_VARS automatically.
+export const ARCHIVE_HOURLY_VARS = HOURLY_VARS.filter(
+  (v) => v !== "weather_code" && v !== "precipitation_probability",
+);
+// Daily observed vars: drop `precipitation_probability_max` (probability) and
+// `uv_index_max` (ERA5 archive doesn't carry it).
+export const ARCHIVE_DAILY_VARS = DAILY_VARS.filter(
+  (v) => v !== "precipitation_probability_max" && v !== "uv_index_max",
+);
+
 function buildUrl(base: string, params: Record<string, string | number | undefined>): string {
   const url = new URL(base);
   for (const [key, value] of Object.entries(params)) {
@@ -82,12 +99,23 @@ export interface ForecastParams {
   forecastDays?: number;
   pastDays?: number;
   timezone?: string;
-  /** Extra models to overlay alongside best_match, e.g. ["jma_seamless"]. */
+  /**
+   * The models to blend into a consensus (see utils/consensus). Empty → `best_match`,
+   * Open-Meteo's automatic pick. One → that model alone. Two or more → the response
+   * is multi-model (suffixed columns) and {@link fetchForecast} reduces it to a
+   * consensus. `best_match` is intentionally not mixed in — it's a meta-model that
+   * would double-count whichever real model it adopted.
+   */
   extraModels?: string[];
 }
 
+/** The models actually requested for a set of picker selections. */
+function requestModels(extraModels?: string[]): string[] {
+  const selected = (extraModels ?? []).filter(Boolean);
+  return selected.length ? selected : ["best_match"];
+}
+
 export function buildForecastUrl(params: ForecastParams): string {
-  const models = ["best_match", ...(params.extraModels ?? [])];
   return buildUrl(FORECAST_URL, {
     latitude: params.latitude,
     longitude: params.longitude,
@@ -97,7 +125,7 @@ export function buildForecastUrl(params: ForecastParams): string {
     timezone: params.timezone ?? "auto",
     forecast_days: params.forecastDays ?? MAX_FORECAST_DAYS,
     past_days: params.pastDays ?? 0,
-    models: models.length > 1 ? models.join(",") : "best_match",
+    models: requestModels(params.extraModels).join(","),
     windspeed_unit: "kmh",
     precipitation_unit: "mm",
     temperature_unit: "celsius",
@@ -112,12 +140,19 @@ export function buildForecastUrl(params: ForecastParams): string {
 // large / slow-moving and lower-priority, fine to serve from the same-hour cache.
 const LIVE_CACHE = { maxAgeMs: 2 * 60 * 1000 } as const; // 2 min
 
-export function fetchForecast(params: ForecastParams, signal?: AbortSignal): Promise<ForecastResponse> {
-  return fetchJson<ForecastResponse>(buildForecastUrl(params), {
-    label: "forecast",
-    signal,
-    cache: LIVE_CACHE,
-  });
+export async function fetchForecast(
+  params: ForecastParams,
+  signal?: AbortSignal,
+): Promise<ForecastResponse> {
+  const url = buildForecastUrl(params);
+  // With ≥2 models Open-Meteo returns per-model suffixed columns; blend them into a
+  // single consensus response so everything downstream stays model-agnostic. One
+  // model (or best_match) comes back in the normal single-model shape already.
+  if (requestModels(params.extraModels).length >= 2) {
+    const raw = await fetchJson<RawMultiForecast>(url, { label: "forecast", signal, cache: LIVE_CACHE });
+    return buildConsensus(raw, requestModels(params.extraModels));
+  }
+  return fetchJson<ForecastResponse>(url, { label: "forecast", signal, cache: LIVE_CACHE });
 }
 
 export interface MinutelyParams {
@@ -206,6 +241,38 @@ export function fetchAirQuality(
     signal,
     cache: LIVE_CACHE,
   });
+}
+
+export interface ArchiveParams {
+  latitude: number;
+  longitude: number;
+  /** Inclusive local dates "YYYY-MM-DD". */
+  startDate: string;
+  endDate: string;
+  timezone?: string;
+}
+
+// Observed history (ERA5 reanalysis). Uses start_date/end_date rather than past_days,
+// and MUST mirror buildForecastUrl's timezone + unit params so the returned grid and
+// units line up with the forecast for a clean splice at "now" (see utils/observed).
+export function buildArchiveUrl(params: ArchiveParams): string {
+  return buildUrl(ARCHIVE_URL, {
+    latitude: params.latitude,
+    longitude: params.longitude,
+    hourly: ARCHIVE_HOURLY_VARS.join(","),
+    daily: ARCHIVE_DAILY_VARS.join(","),
+    timezone: params.timezone ?? "auto",
+    start_date: params.startDate,
+    end_date: params.endDate,
+    windspeed_unit: "kmh",
+    precipitation_unit: "mm",
+    temperature_unit: "celsius",
+  });
+}
+
+export function fetchArchive(params: ArchiveParams, signal?: AbortSignal): Promise<ArchiveResponse> {
+  // Historical data is stable — fine to serve from the same-hour cache.
+  return fetchJson<ArchiveResponse>(buildArchiveUrl(params), { label: "archive", signal, cache: true });
 }
 
 export function buildGeocodeUrl(name: string, count = 100): string {

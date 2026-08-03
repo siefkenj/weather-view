@@ -30,4 +30,13 @@ describe("parseState", () => {
     expect(parse("start=2026-07-20T06:30").viewStart).toBeNull();
     expect(parse("layers=temp,bogus").series).toEqual(["temp"]);
   });
+
+  it("keeps only known model ids from the models param", () => {
+    expect(parse("models=ecmwf_ifs025,gfs_seamless").extraModels).toEqual([
+      "ecmwf_ifs025",
+      "gfs_seamless",
+    ]);
+    expect(parse("models=ecmwf_ifs025,made_up_model").extraModels).toEqual(["ecmwf_ifs025"]);
+    expect(parse("models=made_up_model").extraModels).toEqual([]);
+  });
 });
