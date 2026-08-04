@@ -389,8 +389,9 @@ describe("buildMeteogramOption", () => {
       { seriesName: "Wind speed", value: 13, color: "#000", axisValue: base.hourly.time[3], dataIndex: 3 },
     ]);
     expect(html).toContain("13 km/h");
-    expect(html).toContain("rotate(0deg)"); // 90° bearing on an east-based glyph → no rotation
-    expect(html).toMatch(/<\/span>\s*E/); // compass point follows the arrow
+    // 90° FROM (east) → wind blowing west; east-based ⟶ glyph rotates 180° to point that way.
+    expect(html).toContain("rotate(180deg)");
+    expect(html).toMatch(/<\/span>\s*E/); // compass point (the FROM direction) follows the arrow
   });
 
   it("lists tooltip rows in a stable canonical order regardless of param order", () => {

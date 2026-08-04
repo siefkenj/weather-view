@@ -1627,6 +1627,14 @@ button {
 .status-slot__msg--error .status-slot__dot {
   background: #de3921;
 }
+/* The "Updating…" indicator floats over the banner gradient, so sit it on a faint
+   translucent pill to keep the dim text legible without drawing the eye. */
+.status-slot__msg--load {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  backdrop-filter: blur(2px);
+}
 .status-slot__x {
   flex: none;
   margin-left: 2px;

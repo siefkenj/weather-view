@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatWindSpeed, windArrowRotation, windArrowSpan, windCompass } from "./wind";
+import { formatWindSpeed, WIND_ARROW_TITLE, windArrowRotation, windArrowSpan, windCompass } from "./wind";
 
 describe("windCompass", () => {
   it("maps cardinal and intercardinal bearings", () => {
@@ -26,28 +26,29 @@ describe("windCompass", () => {
 });
 
 describe("windArrowRotation", () => {
-  it("offsets from the glyph's east base so CSS rotates to the exact bearing", () => {
-    // The ⟶ glyph points east (90°), so rotation = bearing − 90 (not snapped).
-    expect(windArrowRotation(90)).toBe(0); // due east → no rotation
-    expect(windArrowRotation(0)).toBe(270); // due north
-    expect(windArrowRotation(180)).toBe(90); // due south
-    expect(windArrowRotation(202.5)).toBe(112.5);
+  it("points the way the wind is blowing (deg + 180), offset from the glyph's east base", () => {
+    // ⟶ points east (90°); rotation = (FROM bearing + 180) − 90 = bearing + 90.
+    expect(windArrowRotation(90)).toBe(180); // wind FROM east → blowing west
+    expect(windArrowRotation(0)).toBe(90); // FROM north → blowing south
+    expect(windArrowRotation(180)).toBe(270); // FROM south → blowing north
+    expect(windArrowRotation(202.5)).toBe(292.5);
   });
 
   it("normalises out-of-range bearings and blanks on unknown", () => {
-    expect(windArrowRotation(360)).toBe(270); // same as 0
-    expect(windArrowRotation(-90)).toBe(180);
+    expect(windArrowRotation(360)).toBe(90); // same as 0
+    expect(windArrowRotation(-90)).toBe(0);
     expect(windArrowRotation(null)).toBeNull();
     expect(windArrowRotation(NaN)).toBeNull();
   });
 });
 
 describe("windArrowSpan", () => {
-  it("emits a span rotated to the exact bearing", () => {
+  it("emits a span rotated the way the wind is blowing, with the convention as title", () => {
     const html = windArrowSpan(202.5);
-    expect(html).toContain("rotate(112.5deg)");
+    expect(html).toContain("rotate(292.5deg)");
     expect(html).toContain("⟶");
     expect(html).toContain("display:inline-block");
+    expect(html).toContain(`title="${WIND_ARROW_TITLE}"`);
   });
 
   it("applies a colour when given and is empty for unknown bearings", () => {

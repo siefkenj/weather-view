@@ -624,9 +624,9 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
           const dot = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};margin-right:6px"></span>`;
           const suffix = unitFor[p.seriesName] ?? "";
           const on = p.seriesName === hovered;
-          // Wind: append a bearing arrow (rotated to the exact direction) + compass
-          // point it's blowing from, looked up at the hovered index (not carried on the
-          // series value). Blank when unknown.
+          // Wind: append a bearing arrow (pointing the way the wind is blowing) + the
+          // compass point it's coming from, looked up at the hovered index (not carried
+          // on the series value). Blank when unknown.
           let windTail = "";
           if (p.seriesName === "Wind speed" && idx != null) {
             const deg = hourly.windDirection?.[idx];
