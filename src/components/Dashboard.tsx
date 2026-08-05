@@ -268,16 +268,18 @@ export function Dashboard({ place }: { place: Place }) {
     return map;
   }, [airQ.data]);
 
-  // The current weather day (2am → 2am) that contains "now", for the today-panel
-  // graph. Before 2am the day belongs to the previous calendar date. Uses the
-  // 15-minute grid when it covers the day, else falls back to hourly.
+  // The current LOCAL calendar day (midnight → midnight) that contains "now", for the
+  // today-panel graph. Anchored to the same `dayKey(current.time)` as `todayKey`, so the
+  // trace, its high/low markers, and its sun shading flip to the new date the instant the
+  // clock passes midnight — matching the facts panel. (A 2am→2am "weather day" used to keep
+  // showing yesterday's high until 2am.) Uses the 15-minute grid when it covers the day,
+  // else falls back to hourly.
   const miniWindow = useMemo(() => {
     if (!full || !forecast) return null;
     const nowIsoTime = forecast.current.time;
-    const dayStart =
-      Number(nowIsoTime.slice(11, 13)) < 2 ? addDays(dayKey(nowIsoTime), -1) : dayKey(nowIsoTime);
-    const start = `${dayStart}T02:00`;
-    const end = `${addDays(dayStart, 1)}T02:00`;
+    const dayStart = dayKey(nowIsoTime);
+    const start = `${dayStart}T00:00`;
+    const end = `${addDays(dayStart, 1)}T00:00`;
     let time: string[] = [];
     let temperature: number[] = [];
     let apparent: number[] = [];

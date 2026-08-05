@@ -164,7 +164,7 @@ export interface MinutelyParams {
 }
 
 // A small near-term 15-minute window: enough to cover the mini "today" graph
-// (2am→2am) plus a zoomed-in ±day or two of the meteogram. Kept light on purpose.
+// (one calendar day) plus a zoomed-in ±day or two of the meteogram. Kept light on purpose.
 export function buildMinutelyUrl(params: MinutelyParams): string {
   return buildUrl(FORECAST_URL, {
     latitude: params.latitude,

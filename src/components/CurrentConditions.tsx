@@ -25,8 +25,9 @@ interface Props {
   aqi?: number | null;
   /** Present when the forecast is a multi-model blend — drives the "consensus" note. */
   consensus?: ConsensusMeta;
-  /** Hourly data across one 2am→2am weather day for the mini graph (°C). `dayKey`
-   *  is the day the high/low markers belong to; sunrise/sunset drive the shading. */
+  /** Hourly data across one local calendar day (midnight→midnight) for the mini graph
+   *  (°C). `dayKey` is the day the high/low markers belong to; sunrise/sunset drive the
+   *  shading. */
   mini?: {
     time: string[];
     temperature: number[];
@@ -218,7 +219,7 @@ function windowPct(iso: string, startMs: number, spanMs: number): number {
   return Math.max(0, Math.min(100, p));
 }
 
-/** Compact temperature trace over one 2am→2am day: solar-lit background, actual
+/** Compact temperature trace over one local calendar day: solar-lit background, actual
  *  (solid) past vs forecast (faded) future, today's high/low, and — only where it
  *  diverges by >2°C — a dashed "feels like" line. */
 function TempMiniGraph({
@@ -316,7 +317,7 @@ function TempMiniGraph({
   const t0 = parseLocal(time[0]).getTime();
   const winSpan = parseLocal(time[n - 1]).getTime() - t0;
 
-  // Faint vertical guides every 3 hours (03:00, 06:00 … 00:00) across the 2am→2am
+  // Faint vertical guides every 3 hours (03:00, 06:00 … 21:00) across the calendar-day
   // window, positioned by real elapsed time so they hold on hourly or 15-min grids.
   const gridX: number[] = [];
   if (winSpan > 0) {
