@@ -4,12 +4,12 @@
 // run or unmount aborts the previous fetches.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchModelPrecipHistory, fetchTruthPrecip } from "../api/modelHistory";
-import { rankCombinations, wetHours, type Combination } from "../utils/modelEval";
+import { fetchModelPrecipHistory, fetchTruthPrecip, REANALYSIS_LAG_DAYS } from "../api/modelHistory";
+import { rankCombinations, type Combination, type RankReason } from "../utils/modelEval";
 import { addDays, todayInZone } from "../utils/format";
 import type { Place } from "../api/types";
 
-/** How much history to download and test over. */
+/** How much scorable history to aim for. */
 export const HISTORY_DAYS = 90;
 
 export type BestComboStatus = "idle" | "loading" | "done" | "error";
@@ -18,12 +18,19 @@ export interface BestComboResult {
   source: "gauge" | "reanalysis";
   /** Label for the truth used, e.g. "Toronto City gauge · 4 km" or "ERA5 reanalysis". */
   truthLabel: string;
-  /** Ranked combinations (best rain-timing first); empty if there was too little rain. */
+  /** Ranked combinations, best rain-timing first; empty if there was too little rain. */
   combos: Combination[];
-  /** Observed rain hours in the window (context for the panel). */
-  rainHours: number;
-  /** Models that had data at the point (the search space). */
+  /** The recommendation: simplest combo within one standard error of the best score. */
+  best: Combination | null;
+  /** Observed rain EVENTS scored (context for the panel). */
+  events: number;
+  /** Hours actually scored — truth ∩ every model kept. */
+  evalHours: number;
+  /** Models that had usable data at the point (the search space). */
   modelCount: number;
+  /** Models excluded for patchy coverage of the window. */
+  dropped: string[];
+  reason?: RankReason;
 }
 
 export function useBestCombination() {
@@ -53,18 +60,25 @@ export function useBestCombination() {
       // End yesterday: the ERA5 archive (and gauges) lag, and its allowed end_date can
       // sit a day behind "today" for zones ahead of UTC — requesting today 400s there.
       const end = addDays(todayInZone(place.timezone), -1);
-      const start = addDays(end, -HISTORY_DAYS);
+      // Reach back far enough that ERA5 still yields HISTORY_DAYS of scorable truth once
+      // its IFS-filled tail is trimmed (see REANALYSIS_LAG_DAYS); a gauge just gets more.
+      const start = addDays(end, -(HISTORY_DAYS + REANALYSIS_LAG_DAYS));
       // Truth first — it fixes the point (a Canadian gauge, else the location) the model
       // history is sampled at, so model and truth are spatially coincident.
       const truth = await fetchTruthPrecip(place, start, end, ac.signal);
       const hist = await fetchModelPrecipHistory(truth.point, start, end, ac.signal);
       if (ac.signal.aborted) return null;
+      const ranked = rankCombinations(hist.byModel, truth.precip, hist.models);
       const res: BestComboResult = {
         source: truth.source,
         truthLabel: truth.label,
-        combos: rankCombinations(hist.byModel, truth.precip, hist.models),
-        rainHours: wetHours(truth.precip).length,
+        combos: ranked.combos,
+        best: ranked.best,
+        events: ranked.nEvents,
+        evalHours: ranked.evalHours,
         modelCount: hist.models.length,
+        dropped: ranked.dropped,
+        reason: ranked.reason,
       };
       setResult(res);
       setStatus("done");

@@ -6,10 +6,17 @@
 import { fetchJson } from "./http";
 import { fetchStationPrecipWindowUtc, type EcccStation } from "./eccc";
 import { MODELS } from "../utils/models";
+import { WET_MM } from "../utils/modelEval";
+import { addDays } from "../utils/format";
 import type { Place } from "./types";
 
 const HISTORICAL_FORECAST_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast";
 const ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive";
+
+/** ERA5 lands ~5 days behind, and the archive silently gap-fills that tail with ECMWF
+ *  IFS *forecasts*. Scoring against that tail would be scoring ECMWF against itself and
+ *  would hand it the ranking, so reanalysis truth stops this far short of the window. */
+export const REANALYSIS_LAG_DAYS = 6;
 
 function buildUrl(base: string, params: Record<string, string | number>): string {
   const url = new URL(base);
@@ -65,42 +72,38 @@ export async function fetchModelPrecipHistory(
       if (Object.keys(series).length) byModel[id] = series;
     }
     // Regional "seamless" models fall back to a global backbone outside their region
-    // (e.g. KNMI ≈ ECMWF over N. America), so they'd duplicate that model in the search
-    // and the results. Keep models in catalog order (globals first), dropping any whose
-    // precip is ~identical to one already kept.
+    // (e.g. KNMI ≈ ECMWF over N. America), so they'd duplicate that model in the search.
+    // A duplicate is worse than a wasted slot: it double-weights that model inside every
+    // median. Keep models in catalog order (globals first), dropping the echoes.
     for (const id of ids) {
       if (!byModel[id]) continue;
-      if (models.some((k) => seriesCorr(byModel[k], byModel[id]) > 0.99)) continue;
+      if (models.some((k) => isDuplicateSeries(byModel[k], byModel[id]))) continue;
       models.push(id);
     }
   }
   return { models, byModel };
 }
 
-/** Pearson correlation of two UTC-keyed precip series over their shared hours. */
-function seriesCorr(a: Record<string, number>, b: Record<string, number>): number {
+/**
+ * True when two precip series are effectively the same model output — either the amounts
+ * match almost everywhere, or (for a re-interpolated fallback) they agree on almost every
+ * wet hour. Both bars are far above what two genuinely distinct global models reach over
+ * a season, so this drops echoes without ever discarding a real candidate.
+ */
+function isDuplicateSeries(a: Record<string, number>, b: Record<string, number>): boolean {
   const keys = Object.keys(a).filter((k) => k in b);
-  if (keys.length < 100) return 0;
-  const n = keys.length;
-  let mx = 0;
-  let my = 0;
+  if (keys.length < 24 * 14) return false; // too little overlap to judge
+  let same = 0;
+  let wetBoth = 0;
+  let wetEither = 0;
   for (const k of keys) {
-    mx += a[k];
-    my += b[k];
+    if (Math.abs(a[k] - b[k]) <= 0.05) same++;
+    const wa = a[k] >= WET_MM;
+    const wb = b[k] >= WET_MM;
+    if (wa && wb) wetBoth++;
+    if (wa || wb) wetEither++;
   }
-  mx /= n;
-  my /= n;
-  let num = 0;
-  let dx = 0;
-  let dy = 0;
-  for (const k of keys) {
-    const u = a[k] - mx;
-    const v = b[k] - my;
-    num += u * v;
-    dx += u * u;
-    dy += v * v;
-  }
-  return dx > 0 && dy > 0 ? num / Math.sqrt(dx * dy) : 0;
+  return same / keys.length >= 0.99 || (wetEither > 0 && wetBoth / wetEither >= 0.98);
 }
 
 export interface TruthPrecip {
@@ -164,11 +167,16 @@ export async function fetchTruthPrecip(
     };
   }
   const point = { latitude: place.latitude, longitude: place.longitude };
+  // Stop short of the IFS-filled tail (see REANALYSIS_LAG_DAYS); never past the start.
+  const era5End = addDays(endDate, -REANALYSIS_LAG_DAYS);
   return {
     source: "reanalysis",
     label: "ERA5 reanalysis",
     point,
-    precip: await fetchReanalysisPrecip(point, startDate, endDate, signal),
+    precip:
+      era5End > startDate
+        ? await fetchReanalysisPrecip(point, startDate, era5End, signal)
+        : {},
     station: null,
   };
 }

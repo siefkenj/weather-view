@@ -113,6 +113,7 @@ describe("archiveDailySummaries", () => {
       temperature_2m_min: [15, 14],
       wind_speed_10m_max: [20, 30],
       wind_direction_10m_dominant: [180, 200],
+      relative_humidity_2m_mean: [70, 85],
     }),
   );
 
@@ -120,6 +121,7 @@ describe("archiveDailySummaries", () => {
     expect(s[1].code).toBe(61);
     expect(s[1].tempMax).toBe(22);
     expect(s[1].precipSum).toBe(5);
+    expect(s[1].humidity).toBe(85);
     expect(Number.isNaN(s[1].uvMax)).toBe(true);
     expect(Number.isNaN(s[1].precipProbMax)).toBe(true);
   });
@@ -139,6 +141,7 @@ describe("mergeObservedDaily", () => {
     sunset: "",
     windMax: 0,
     windDir: 0,
+    humidity: 60,
   });
 
   it("replaces prior days but keeps today and the future on the forecast", () => {

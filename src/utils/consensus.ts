@@ -190,6 +190,7 @@ export function buildConsensus(raw: RawMultiForecast, models: string[]): Forecas
     temperature_2m_min: reduceSeries(raw.daily, "temperature_2m_min", models, D, median),
     wind_speed_10m_max: reduceSeries(raw.daily, "wind_speed_10m_max", models, D, median),
     wind_direction_10m_dominant: reduceSeries(raw.daily, "wind_direction_10m_dominant", models, D, circularMeanDeg),
+    relative_humidity_2m_mean: reduceSeries(raw.daily, "relative_humidity_2m_mean", models, D, median),
   };
 
   // Rebuild "current" from the hourly consensus at the current hour (the raw

@@ -70,6 +70,7 @@ export interface ForecastDaily {
   temperature_2m_min: number[];
   wind_speed_10m_max: number[];
   wind_direction_10m_dominant: number[];
+  relative_humidity_2m_mean: number[];
 }
 
 /** How the multi-model consensus for TODAY was reached, attached to a consensus
@@ -132,6 +133,7 @@ export interface ArchiveDaily {
   temperature_2m_min: (number | null)[];
   wind_speed_10m_max: (number | null)[];
   wind_direction_10m_dominant: (number | null)[];
+  relative_humidity_2m_mean: (number | null)[];
 }
 
 export interface ArchiveResponse {

@@ -150,6 +150,10 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
               </span>
             </li>
             <li>
+              <span className="fact-key">Humidity</span>
+              <span className="fact-val">{roundOrDash(today.humidity, "%")}</span>
+            </li>
+            <li>
               <span className="fact-key">Sunrise</span>
               <span className="fact-val">{formatTime(today.sunrise)}</span>
             </li>

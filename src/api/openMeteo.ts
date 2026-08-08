@@ -51,6 +51,7 @@ export const DAILY_VARS = [
   "temperature_2m_min",
   "wind_speed_10m_max",
   "wind_direction_10m_dominant",
+  "relative_humidity_2m_mean",
 ] as const;
 
 export const CURRENT_VARS = ["temperature_2m", "apparent_temperature", "weather_code"] as const;

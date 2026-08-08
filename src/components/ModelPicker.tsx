@@ -75,6 +75,8 @@ export function ModelPicker({ selected, onChange, place }: Props) {
 
       {specific ? (
         <>
+          {place ? <BestFinder place={place} best={best} onApply={onChange} /> : null}
+
           <ul className="model-picker__list">
             {MODELS.map((m) => {
               const on = chosen.includes(m.id);
@@ -91,8 +93,6 @@ export function ModelPicker({ selected, onChange, place }: Props) {
               );
             })}
           </ul>
-
-          {place ? <BestFinder place={place} best={best} onApply={onChange} /> : null}
         </>
       ) : null}
     </div>
@@ -112,8 +112,8 @@ function BestFinder({
 
   const find = async () => {
     const res = await run(place);
-    // The end result: check the optimal set of models (a ready-made consensus).
-    if (res && res.combos.length > 0) onApply(res.combos[0].models);
+    // The end result: check the recommended set of models (a ready-made consensus).
+    if (res?.best) onApply(res.best.models);
   };
 
   const timedOut = !!error && /\b(504|502|503|gateway|timeout|timed out)\b/i.test(error);
@@ -145,15 +145,19 @@ function BestFinder({
       ) : null}
 
       {status === "done" && result ? (
-        result.combos.length === 0 ? (
+        !result.best ? (
           <p className="settings__hint">
-            Not enough rain near {place.name} in the last {HISTORY_DAYS} days to choose ({result.rainHours} rain hours).
+            {result.reason === "no-data"
+              ? `No usable observed rain record near ${place.name} for the last ${HISTORY_DAYS} days.`
+              : `Not enough rain near ${place.name} in the last ${HISTORY_DAYS} days to choose (${result.events} rain events).`}
           </p>
         ) : (
           <p className="best-finder__caption">
-            Checked <strong>{result.combos[0].models.map(modelLabel).join(" + ")}</strong> — best rain timing vs{" "}
-            {result.truthLabel} ({result.combos[0].jitter.toFixed(1)} h, {Math.round(result.combos[0].caught * 100)}%
-            caught)
+            Checked <strong>{result.best.models.map(modelLabel).join(" + ")}</strong> — best rain
+            timing vs {result.truthLabel}: {result.best.score.toFixed(1)} ±{" "}
+            {result.best.se.toFixed(1)} h average error over {result.events} rain events,{" "}
+            {Math.round(result.best.caught * 100)}% caught,{" "}
+            {Math.round(result.best.falseAlarm * 100)}% false alarms
             {result.source === "reanalysis" ? (
               <span className="best-finder__note"> · reanalysis estimate, not a real gauge</span>
             ) : null}

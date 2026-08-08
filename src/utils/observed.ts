@@ -96,6 +96,7 @@ export function archiveDailySummaries(archive: ArchiveResponse): DailySummary[] 
     sunset: d.sunset[i] ?? "",
     windMax: num(d.wind_speed_10m_max[i]),
     windDir: num(d.wind_direction_10m_dominant[i]),
+    humidity: num(d.relative_humidity_2m_mean[i]),
   }));
 }
 

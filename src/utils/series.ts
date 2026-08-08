@@ -32,6 +32,8 @@ export interface DailySummary {
   /** Day's peak wind speed (km/h) and its dominant direction (° the wind is from). */
   windMax: number;
   windDir: number;
+  /** Day's mean relative humidity (%). NaN on observed past days when unavailable. */
+  humidity: number;
 }
 
 /** Pull the hourly block into named arrays (full past+future range). */
@@ -128,6 +130,7 @@ export function dailySummaries(resp: ForecastResponse): DailySummary[] {
     sunset: d.sunset[i],
     windMax: d.wind_speed_10m_max[i],
     windDir: d.wind_direction_10m_dominant[i],
+    humidity: d.relative_humidity_2m_mean[i],
   }));
 }
 
