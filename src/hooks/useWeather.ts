@@ -41,11 +41,23 @@ const poll = {
 
 /** Retain the last defined data while a refetch is in flight (parity with the old
  *  `placeholderData: keepPreviousData`). Nothing is retained while a query is
- *  skipped/idle, so disabled panels don't show stale data. */
-function useKeepData<T>(data: T | undefined, isFetching: boolean): T | undefined {
-  const ref = useRef<T | undefined>(undefined);
-  if (data !== undefined) ref.current = data;
-  return data ?? (isFetching ? ref.current : undefined);
+ *  skipped/idle, so disabled panels don't show stale data.
+ *
+ *  Takes `currentData`, NOT `data`. RTK Query's `data` is the last value this hook
+ *  successfully fetched and deliberately survives a cache-key change, so reading it
+ *  would show the previous city's numbers under the new city's name for as long as the
+ *  new request is in flight. `currentData` is scoped to the current args and goes
+ *  undefined the moment they change — which is the honest starting point.
+ *
+ *  Retention is then re-added, scoped to `key` (the location): widening the forecast
+ *  range (stage 1 → stage 2) or changing the model blend keeps the previous data on
+ *  screen, but switching cities does not — the dashboard stays mounted across a city
+ *  switch and shows dashes instead. */
+function useKeepData<T>(currentData: T | undefined, isFetching: boolean, key: string): T | undefined {
+  const ref = useRef<{ key: string; data: T } | null>(null);
+  if (currentData !== undefined) ref.current = { key, data: currentData };
+  const kept = ref.current?.key === key ? ref.current.data : undefined;
+  return currentData ?? (isFetching ? kept : undefined);
 }
 
 /** Debounce the chosen model set so ticking several boxes in the picker fires ONE
@@ -77,7 +89,7 @@ export function useForecast(place: Place, options: ForecastOptions) {
     },
     poll,
   );
-  return { ...r, data: useKeepData(r.data, r.isFetching) };
+  return { ...r, data: useKeepData(r.currentData, r.isFetching, placeKey(place)) };
 }
 
 export function useMinutely(place: Place, options: { enabled?: boolean } = {}) {
@@ -85,7 +97,7 @@ export function useMinutely(place: Place, options: { enabled?: boolean } = {}) {
     { latitude: place.latitude, longitude: place.longitude, timezone: place.timezone },
     { skip: options.enabled === false, ...poll },
   );
-  return { ...r, data: useKeepData(r.data, r.isFetching) };
+  return { ...r, data: useKeepData(r.currentData, r.isFetching, placeKey(place)) };
 }
 
 export function useEnsemble(place: Place, options: { forecastDays: number; enabled: boolean }) {
@@ -98,7 +110,7 @@ export function useEnsemble(place: Place, options: { forecastDays: number; enabl
     },
     { skip: !options.enabled },
   );
-  return { ...r, data: useKeepData(r.data, r.isFetching) };
+  return { ...r, data: useKeepData(r.currentData, r.isFetching, placeKey(place)) };
 }
 
 export function useAirQuality(
@@ -115,7 +127,7 @@ export function useAirQuality(
     },
     { skip: !options.enabled, ...poll },
   );
-  return { ...r, data: useKeepData(r.data, r.isFetching) };
+  return { ...r, data: useKeepData(r.currentData, r.isFetching, placeKey(place)) };
 }
 
 /** Observed (ERA5) history for the past window. Historical data is stable, so no
@@ -134,7 +146,7 @@ export function useArchive(
     },
     { skip: !options.enabled },
   );
-  return { ...r, data: useKeepData(r.data, r.isFetching) };
+  return { ...r, data: useKeepData(r.currentData, r.isFetching, placeKey(place)) };
 }
 
 /** Measured rain-gauge precipitation for the past (ECCC nearest station; Canada only).
@@ -154,7 +166,7 @@ export function useStationPrecip(
     },
     { skip: !options.enabled },
   );
-  return { ...r, data: useKeepData(r.data, r.isFetching) };
+  return { ...r, data: useKeepData(r.currentData, r.isFetching, placeKey(place)) };
 }
 
 /** Air quality reaches ~7 days out on Open-Meteo. */
@@ -184,7 +196,17 @@ interface LocationOptions {
  * data on screen until the full range arrives.
  */
 export function useLocationWeather(place: Place, options: LocationOptions = {}) {
+  const key = placeKey(place);
   const [loadFull, setLoadFull] = useState(false);
+  // The dashboard is no longer remounted per city, so the staging flag has to be reset
+  // here — otherwise a second city would skip its fast first request and wait on the
+  // full range. Resetting during render (rather than in an effect) keeps the very first
+  // request for the new place correctly scoped.
+  const [keyAt, setKeyAt] = useState(key);
+  if (keyAt !== key) {
+    setKeyAt(key);
+    setLoadFull(false);
+  }
   const forecastDays = loadFull
     ? MAX_FORECAST_DAYS
     : Math.min(MAX_FORECAST_DAYS, options.initialForecastDays ?? MAX_FORECAST_DAYS);

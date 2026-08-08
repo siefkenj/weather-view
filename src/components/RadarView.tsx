@@ -151,6 +151,7 @@ export default function RadarView({ place }: { place: Place }) {
   const loadedRef = useRef<Set<number>>(new Set());
   const aqiLayerRef = useRef<AqiGridLayer | null>(null);
   const windLayerRef = useRef<WindLayer | null>(null);
+  const markerRef = useRef<L.CircleMarker | null>(null);
   // Wind is sampled on a quantized lattice and cached, so pans/zooms reuse points
   // and only the newly-revealed cells are fetched (see WindFieldCache).
   const windCacheRef = useRef(new WindFieldCache());
@@ -235,7 +236,7 @@ export default function RadarView({ place }: { place: Place }) {
     aqiLayerRef.current = aqiLayer;
     const windLayer = new WindLayer({ pane: "wind" });
     windLayerRef.current = windLayer;
-    L.circleMarker([place.latitude, place.longitude], {
+    markerRef.current = L.circleMarker([place.latitude, place.longitude], {
       radius: 5,
       weight: 2,
       color: "#111827",
@@ -292,9 +293,12 @@ export default function RadarView({ place }: { place: Place }) {
     windLayerRef.current?.setColor(theme === "dark" ? "#5aa2f0" : "#1866c0");
   }, [theme]);
 
-  // Recenter when the searched place changes.
+  // Recenter when the searched place changes. The map is created once and now outlives
+  // a city switch (the dashboard is no longer remounted per place), so the location
+  // marker has to be moved here too — otherwise it would sit over the previous city.
   useEffect(() => {
     mapRef.current?.setView([place.latitude, place.longitude]);
+    markerRef.current?.setLatLng([place.latitude, place.longitude]);
   }, [place.latitude, place.longitude]);
 
   // Add/remove the air-quality field layer as it's toggled.

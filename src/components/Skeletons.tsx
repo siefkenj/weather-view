@@ -1,6 +1,9 @@
-// Skeleton placeholders shown while data loads. Rather than a "Loading … data"
-// message, we render the page's shape with shimmering blocks so the layout is
-// present immediately and fills in as each independent query resolves.
+// Loading placeholders shown while data loads. Rather than a "Loading … data" message,
+// we render the page's shape as BLANK blocks (styled in index.css — no shimmer, no fill)
+// so the layout is present immediately and calmly fills in as each query resolves. This
+// is what shows when a city's forecast (re)loads, e.g. when switching cities.
+
+import { CHART_HEIGHT_INTEGRATED } from "./meteogramLayout";
 
 function Sk({
   w,
@@ -83,6 +86,15 @@ export function RadarSkeleton() {
   );
 }
 
+/** Calm, static stand-in for the meteogram: a blank plot area at the chart's real
+ *  height, with no shimmer. When the chart chunk (ECharts) and data resolve, the real
+ *  meteogram draws into this same box — so there's no flash or reflow, only the chart's
+ *  own draw-in animation. Used both as the lazy-load fallback and in the dashboard
+ *  skeleton, in place of a shimmering block. */
+export function MeteogramPlaceholder({ height = CHART_HEIGHT_INTEGRATED }: { height?: number }) {
+  return <div className="meteogram-blank" style={{ height }} aria-hidden="true" />;
+}
+
 /** Full-dashboard placeholder shown while the forecast is loading. */
 export function DashboardSkeleton() {
   return (
@@ -90,8 +102,7 @@ export function DashboardSkeleton() {
       <span className="sk-sr">Loading weather…</span>
       <HeroSkeleton />
       <div className="panel meteogram-panel" aria-hidden="true">
-        <Sk w={170} h={20} />
-        <Sk h={340} r={12} className="sk-mt" />
+        <MeteogramPlaceholder />
       </div>
       <AirPanelSkeleton />
       <RadarSkeleton />

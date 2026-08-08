@@ -6,7 +6,7 @@ import { LocationSearch, type LocationSearchHandle } from "./LocationSearch";
 import { SettingsMenu } from "./SettingsMenu";
 import { StatusBar } from "./StatusBar";
 import { formatTemp, roundOrDash, type Units } from "../utils/units";
-import { dayKey, formatTime, formatWeekdayLong, parseLocal } from "../utils/format";
+import { dayKey, formatTime, formatWeekdayLong, parseLocal, todayInZone } from "../utils/format";
 import { aqhiCategory, formatAqhi } from "../utils/aqhi";
 import { formatWindSpeed, windCompass } from "../utils/wind";
 import { WindArrow } from "./WindArrow";
@@ -18,9 +18,13 @@ import { addRecentPlace } from "../utils/recentPlaces";
 
 interface Props {
   place: Place;
-  current: ForecastCurrent;
+  /** `null` while this location's forecast is loading — every value slot shows "–" and
+   *  the card keeps its shape, so switching cities doesn't blank the header. */
+  current: ForecastCurrent | null;
   today?: DailySummary;
   units: Units;
+  /** `undefined` hides the air row entirely (the panel is off); `null` shows it with
+   *  dashes (on, still loading) so it doesn't pop in later and reflow the list. */
   aqhi?: number | null;
   aqi?: number | null;
   /** Present when the forecast is a multi-model blend — drives the "consensus" note. */
@@ -42,25 +46,37 @@ interface Props {
 const formatAqi = (v: number | null | undefined): string =>
   v != null && Number.isFinite(v) ? String(Math.round(v)) : "–";
 
-/** Daily rain as amount + chance, e.g. "2.4mm (60%)". Always in mm, like the chart. */
+/** Daily rain as amount + chance, e.g. "2.4mm (60%)". Always in mm, like the chart.
+ *  "–" when there is no amount at all — a day that hasn't loaded must not read as a
+ *  confident "0mm (0%)". A loaded dry day still does, because its sum really is 0. */
 function formatRain(mm: number | null | undefined, chance: number | null | undefined): string {
-  const amt = mm != null && Number.isFinite(mm) ? mm : 0;
+  if (mm == null || !Number.isFinite(mm)) return "–";
   const pct = chance != null && Number.isFinite(chance) ? Math.round(chance) : 0;
-  const a = amt <= 0 ? "0" : amt < 10 ? amt.toFixed(1) : String(Math.round(amt));
+  const a = mm <= 0 ? "0" : mm < 10 ? mm.toFixed(1) : String(Math.round(mm));
   return `${a}mm (${pct}%)`;
 }
+
+/** Local time-of-day string, or "–" when the day hasn't loaded. */
+const timeOrDash = (iso: string | undefined): string => (iso ? formatTime(iso) : "–");
 
 export function CurrentConditions({ place, current, today, units, aqhi, aqi, mini, consensus }: Props) {
   // The headline condition summarizes the whole of today (matching the forecast
   // strip's "Today" tile), not the current instant — so a dry gap between showers
   // still reads as a rainy day. Temperature and feels-like below stay live. Falls
-  // back to the current code until the daily summary has loaded.
-  const wx = describeWeather(today?.code ?? current.weather_code);
-  const day = isDaytime(current.time, today?.sunrise, today?.sunset);
+  // back to the current code until the daily summary has loaded, and to a neutral
+  // icon with a "–" label until either has.
+  const code = today?.code ?? current?.weather_code;
+  const known = code != null && Number.isFinite(code);
+  const wx = describeWeather(known ? code : NaN);
+  const day = current ? isDaytime(current.time, today?.sunrise, today?.sunset) : true;
   const cat = aqhi != null && Number.isFinite(aqhi) ? aqhiCategory(aqhi) : null;
-  const hasAir =
-    (aqhi != null && Number.isFinite(aqhi)) || (aqi != null && Number.isFinite(aqi));
-  const hasMini = mini && mini.time.length > 1;
+  // Presence of the PROP (not of a value) decides whether the row exists at all: the
+  // dashboard passes undefined when the air panel is off, null while it's loading.
+  const hasAir = aqhi !== undefined || aqi !== undefined;
+  const hasMini = !!current && !!mini && mini.time.length > 1;
+  // The date line is calendar information, not weather, so it stays truthful from the
+  // location's own timezone while the forecast is still in flight.
+  const dateIso = current?.time ?? `${todayInZone(place.timezone)}T12:00`;
   const navigate = useNavigate();
   const location = useLocation();
   const searchRef = useRef<LocationSearchHandle>(null);
@@ -88,7 +104,7 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
         <SettingsMenu place={place} />
       </div>
       <div className="current__today">
-        <div className="current__date">{formatWeekdayLong(current.time)}</div>
+        <div className="current__date">{formatWeekdayLong(dateIso)}</div>
         <button
           type="button"
           className="current__place"
@@ -98,50 +114,60 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
           {placeLabel(place)}
         </button>
         <div className="current__main">
-          <WeatherIcon kind={wx.icon} night={!day} size={84} title={wx.label} />
+          <WeatherIcon kind={wx.icon} night={!day} size={84} title={known ? wx.label : "Loading"} />
           <div className="current__temp-block">
-            <div className="current__temp">{formatTemp(current.temperature_2m, units, 0)}</div>
-            <div className="current__label">{wx.label}</div>
-            <div className="current__feels">Feels like {formatTemp(current.apparent_temperature, units, 0)}</div>
+            <div className="current__temp">{formatTemp(current?.temperature_2m, units, 0)}</div>
+            <div className="current__label">{known ? wx.label : "–"}</div>
+            <div className="current__feels">
+              Feels like {formatTemp(current?.apparent_temperature, units, 0)}
+            </div>
             {consensus ? <ConsensusNote consensus={consensus} /> : null}
           </div>
         </div>
       </div>
+      {/* The facts list is ALWAYS rendered — every row holds its place with a "–" until
+          the day's summary arrives. It used to be dropped entirely while `today` was
+          undefined, which is what left a hole in the card on every city switch. */}
       <div className="current__meta">
-        {today ? (
-          <div className="current__day">
+        <div className="current__day">
+          {/* The day trace sits to the LEFT of the facts; the facts fill the space to
+              its right and center on their line. The slot is always present — an empty
+              box of the same size stands in until the day's trace can be drawn, so the
+              facts beside it don't shift across when it arrives. */}
+          <div className="fact fact--graph">
+            <span className="fact-key">Today</span>
             {hasMini ? (
-              // The day trace sits to the LEFT of the facts; the facts fill the space to
-              // its right and center on their line.
-              <div className="fact fact--graph">
-                <span className="fact-key">Today</span>
-                <TempMiniGraph
-                  time={mini!.time}
-                  temperature={mini!.temperature}
-                  apparent={mini!.apparent}
-                  todayKey={mini!.dayKey}
-                  sunrise={mini!.sunrise}
-                  sunset={mini!.sunset}
-                  nowIso={current.time}
-                  nowTemp={current.temperature_2m}
-                  units={units}
-                />
+              <TempMiniGraph
+                time={mini!.time}
+                temperature={mini!.temperature}
+                apparent={mini!.apparent}
+                todayKey={mini!.dayKey}
+                sunrise={mini!.sunrise}
+                sunset={mini!.sunset}
+                nowIso={current!.time}
+                nowTemp={current!.temperature_2m}
+                units={units}
+              />
+            ) : (
+              <div className="temp-mini-wrap">
+                <div className="temp-mini-blank" aria-hidden="true" />
               </div>
-            ) : null}
-            <ul className="current__facts">
+            )}
+          </div>
+          <ul className="current__facts">
             <li>
               <span className="fact-key">UV max</span>
-              <span className="fact-val">{roundOrDash(today.uvMax)}</span>
+              <span className="fact-val">{roundOrDash(today?.uvMax)}</span>
             </li>
             <li>
               <span className="fact-key">Rain</span>
-              <span className="fact-val">{formatRain(today.precipSum, today.precipProbMax)}</span>
+              <span className="fact-val">{formatRain(today?.precipSum, today?.precipProbMax)}</span>
             </li>
             <li>
               <span className="fact-key">Wind</span>
               <span className="fact-val">
-                {formatWindSpeed(today.windMax)}
-                {Number.isFinite(today.windMax) && Number.isFinite(today.windDir) ? (
+                {formatWindSpeed(today?.windMax)}
+                {today && Number.isFinite(today.windMax) && Number.isFinite(today.windDir) ? (
                   <>
                     {" "}
                     <WindArrow deg={today.windDir} /> {windCompass(today.windDir)}
@@ -151,15 +177,15 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
             </li>
             <li>
               <span className="fact-key">Humidity</span>
-              <span className="fact-val">{roundOrDash(today.humidity, "%")}</span>
+              <span className="fact-val">{roundOrDash(today?.humidity, "%")}</span>
             </li>
             <li>
               <span className="fact-key">Sunrise</span>
-              <span className="fact-val">{formatTime(today.sunrise)}</span>
+              <span className="fact-val">{timeOrDash(today?.sunrise)}</span>
             </li>
             <li>
               <span className="fact-key">Sunset</span>
-              <span className="fact-val">{formatTime(today.sunset)}</span>
+              <span className="fact-val">{timeOrDash(today?.sunset)}</span>
             </li>
             {hasAir ? (
               <li className="fact fact--air" title={cat?.message}>
@@ -174,9 +200,8 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
                 ) : null}
               </li>
             ) : null}
-            </ul>
-          </div>
-        ) : null}
+          </ul>
+        </div>
       </div>
     </section>
   );

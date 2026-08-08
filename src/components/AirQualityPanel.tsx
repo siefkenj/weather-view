@@ -15,29 +15,33 @@ const AQI_HELP =
   "the highest sub-index — i.e. the single worst pollutant at that hour.";
 
 interface Props {
-  data: AirQualityResponse;
+  /** `null` while the location's air quality is still loading — the panel keeps its
+   *  shape and shows "–" in every value slot rather than unmounting. */
+  data: AirQualityResponse | null;
   /** AQHI per hour, aligned to data.hourly.time. */
-  aqhi: number[];
+  aqhi: number[] | null;
   /** Focused hour — the badge/tiles describe this moment. */
-  nowIso: string;
+  nowIso: string | null;
 }
 
 // The AQHI trend is now drawn in the stacked meteogram; this panel keeps the
 // current AQHI badge and the pollutant breakdown for the focused hour.
 export function AirQualityPanel({ data, aqhi, nowIso }: Props) {
-  const h = data.hourly;
-  const units = data.hourly_units;
-  const fi = Math.max(0, findNowIndex(h.time, nowIso));
-  const focusIso = h.time[fi] ?? nowIso;
-  const cat = aqhiCategory(aqhi[fi]);
-  const usAqi = h.us_aqi?.[fi];
+  const h = data?.hourly;
+  const units = data?.hourly_units;
+  const fi = h && nowIso ? Math.max(0, findNowIndex(h.time, nowIso)) : -1;
+  const focusIso = (fi >= 0 ? h?.time[fi] : null) ?? nowIso;
+  const aqhiValue = fi >= 0 ? aqhi?.[fi] : undefined;
+  const cat = aqhiValue != null && Number.isFinite(aqhiValue) ? aqhiCategory(aqhiValue) : null;
+  const usAqi = fi >= 0 ? h?.us_aqi?.[fi] : undefined;
   const aqiText = usAqi != null && Number.isFinite(usAqi) ? Math.round(usAqi) : "–";
 
+  const at = (s: (number | null)[] | undefined) => (fi >= 0 ? s?.[fi] : undefined);
   const tiles = [
-    { key: "PM2.5", value: h.pm2_5?.[fi], unit: units.pm2_5 },
-    { key: "PM10", value: h.pm10?.[fi], unit: units.pm10 },
-    { key: "Ozone", value: h.ozone?.[fi], unit: units.ozone },
-    { key: "NO₂", value: h.nitrogen_dioxide?.[fi], unit: units.nitrogen_dioxide },
+    { key: "PM2.5", value: at(h?.pm2_5), unit: units?.pm2_5 },
+    { key: "PM10", value: at(h?.pm10), unit: units?.pm10 },
+    { key: "Ozone", value: at(h?.ozone), unit: units?.ozone },
+    { key: "NO₂", value: at(h?.nitrogen_dioxide), unit: units?.nitrogen_dioxide },
   ];
 
   return (
@@ -45,14 +49,14 @@ export function AirQualityPanel({ data, aqhi, nowIso }: Props) {
       <header className="panel__head">
         <div className="aqi-title">
           <h2>Air quality</h2>
-          <span className="aqi-sub" title={formatFullDate(focusIso)}>
-            {formatDayShort(focusIso)} · {formatTime(focusIso)}
+          <span className="aqi-sub" title={focusIso ? formatFullDate(focusIso) : undefined}>
+            {focusIso ? `${formatDayShort(focusIso)} · ${formatTime(focusIso)}` : "–"}
           </span>
         </div>
         <div className="aqi-badge">
           <span className="aqi-number">
             <span className="aqi-aqhi" title={AQHI_HELP}>
-              {formatAqhi(aqhi[fi])}
+              {formatAqhi(aqhiValue)}
               <span className="aqi-unit">AQHI</span>
             </span>
             <span className="aqi-alt" title={AQI_HELP}>
@@ -61,8 +65,9 @@ export function AirQualityPanel({ data, aqhi, nowIso }: Props) {
               <span className="aqi-alt__paren">)</span>
             </span>
           </span>
-          <span className="aqi-chip" style={{ background: cat.color }}>
-            {cat.label}
+          {/* Reserve the chip's space so the badge doesn't jump when it appears. */}
+          <span className="aqi-chip" style={cat ? { background: cat.color } : { visibility: "hidden" }}>
+            {cat?.label ?? "–"}
           </span>
         </div>
       </header>
@@ -72,7 +77,7 @@ export function AirQualityPanel({ data, aqhi, nowIso }: Props) {
           <div className="aqi-tile" key={t.key}>
             <span className="aqi-tile__key">{t.key}</span>
             <span className="aqi-tile__val">
-              {Number.isFinite(t.value) ? Math.round(t.value) : "–"}
+              {t.value != null && Number.isFinite(t.value) ? Math.round(t.value) : "–"}
               <span className="aqi-tile__unit"> {t.unit ?? "µg/m³"}</span>
             </span>
           </div>

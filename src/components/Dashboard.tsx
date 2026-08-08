@@ -1,11 +1,10 @@
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CurrentConditions } from "./CurrentConditions";
-import { Meteogram } from "./Meteogram";
 import { meteogramLegend } from "./meteogramOption";
-import { AXIS_GUTTER, AXIS_GUTTER_RIGHT_MOBILE } from "./meteogramLayout";
+import { AXIS_GUTTER, AXIS_GUTTER_RIGHT_MOBILE, CHART_HEIGHT, CHART_HEIGHT_INTEGRATED } from "./meteogramLayout";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { AirQualityPanel } from "./AirQualityPanel";
-import { AirPanelSkeleton, DashboardSkeleton, RadarSkeleton } from "./Skeletons";
+import { MeteogramPlaceholder, RadarSkeleton } from "./Skeletons";
 import type { AirMode } from "../api/airQualityGrid";
 import { useDashboardState } from "../hooks/useUrlState";
 import { useTheme } from "../hooks/useTheme";
@@ -29,7 +28,7 @@ import {
   toFineSamples,
 } from "../utils/refine";
 import { archiveDailySummaries, mergeObservedDaily, mergeObservedHourly } from "../utils/observed";
-import { addDays, dayKey, parseLocal, todayInZone } from "../utils/format";
+import { addDays, dayKey, formatDayShort, formatTime, parseLocal, todayInZone } from "../utils/format";
 import { arrowTarget, clampStartIso, shiftStart } from "../utils/pan";
 import { computeAqhiSeries } from "../utils/aqhi";
 import type { Place } from "../api/types";
@@ -40,6 +39,13 @@ const REFINE_MAX_DAYS = 2;
 
 // The radar map (Leaflet) is code-split so it stays off the main chart bundle.
 const RadarView = lazy(() => import("./RadarView"));
+
+// The meteogram pulls in ECharts (~190 KB gzipped) — the app's heaviest dependency.
+// Code-split it too, so the initial bundle (shell + current conditions) paints without
+// waiting for it. `loadMeteogram` is also called on mount (below) to warm the chunk in
+// parallel with the data fetch, so the chart is ready by the time the forecast is.
+const loadMeteogram = () => import("./Meteogram");
+const Meteogram = lazy(() => loadMeteogram().then((m) => ({ default: m.Meteogram })));
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
@@ -87,6 +93,16 @@ export function Dashboard({ place }: { place: Place }) {
   // overrides the committed `viewStart` so the chart re-renders with real data as
   // you scroll, without touching redux/URL until the motion settles.
   const [dragStart, setDragStart] = useState<string | null>(null);
+  // Mobile only: the data index the inspector line/scrubber sits at, or null when the
+  // scrubber hasn't been engaged (no line). On mobile a graph touch pans/pinches only —
+  // this scrubber is the sole way to move the inspector line (see the nav slider below).
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  // Mobile: whether the details label tapped the stats popover closed (the inspector
+  // line stays). Any scrub re-shows it (see the scrubber's onChange).
+  const [popoverHidden, setPopoverHidden] = useState(false);
+  // A pending "snap the scrubber to now" request from "Return to today". The window
+  // reset is async, so we resolve it once the anchored window's data is in hand.
+  const [scrubToNow, setScrubToNow] = useState(false);
   // Panel sub-lines hidden via the legend (temperature series use state.series).
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const toggleHidden = (name: string) =>
@@ -110,16 +126,15 @@ export function Dashboard({ place }: { place: Place }) {
   // today (estimated from the location's zone before any data has arrived) — just
   // today → today + days on a fresh load.
   //
-  // Computed ONCE at mount (Dashboard is remounted per location, so "once" is per
-  // location) and then frozen. This is deliberate: once stage 1 lands, `loadFull`
-  // expands to the full range, so any later pan (`viewStart`) or day-count change is
-  // served from that superset. Recomputing it mid-load — as it did off the
+  // Computed once PER LOCATION and then frozen. This is deliberate: once stage 1 lands,
+  // `loadFull` expands to the full range, so any later pan (`viewStart`) or day-count
+  // change is served from that superset. Recomputing it mid-load — as it did off the
   // width-clamped `windowDays`, and would off `viewStart`/`days` — fires a *second*
   // stage-1 request whose narrower range races the stage-2 full-range refetch into the
   // same (location-keyed) cache entry and drops it; that's what left narrow screens,
   // which re-measure `windowDays` just after first paint, unable to scroll into the past.
-  const [initial] = useState(() => {
-    const today = todayInZone(place.timezone);
+  const initialFor = (p: Place): { initialForecastDays: number; initialPastDays: number } => {
+    const today = todayInZone(p.timezone);
     const startDay = state.viewStart ? dayKey(state.viewStart) : today;
     const endDay = addDays(startDay, state.days);
     const fwd = Math.round((parseLocal(endDay).getTime() - parseLocal(today).getTime()) / DAY_MS);
@@ -128,7 +143,25 @@ export function Dashboard({ place }: { place: Place }) {
       initialForecastDays: clamp(fwd + 1, state.days, MAX_FORECAST_DAYS),
       initialPastDays: clamp(back + 1, 0, FULL_PAST_DAYS),
     };
-  });
+  };
+  const [initial, setInitial] = useState(() => initialFor(place));
+
+  // The dashboard is NOT remounted when the city changes (see LocationPage) — that
+  // remount is what made every widget blank out. So the state that is genuinely
+  // per-location is reset here instead: the frozen fetch window above, plus any
+  // in-flight pan and the mobile scrubber, which refer to the old city's time range.
+  // Legend visibility (`hidden`) and the URL-held view state are user choices and
+  // deliberately survive the switch. Resetting during render is React's documented
+  // way to do this; it re-renders immediately without committing the stale tree.
+  const placeId = `${place.latitude},${place.longitude}`;
+  const [placeAt, setPlaceAt] = useState(placeId);
+  if (placeAt !== placeId) {
+    setPlaceAt(placeId);
+    setInitial(initialFor(place));
+    setDragStart(null);
+    setScrubIndex(null);
+    setPopoverHidden(false);
+  }
 
   // All weather for this location, grouped as sub-objects under its lon,lat key.
   // Each field is an independent RTK Query result (own data/loading/error); the
@@ -208,6 +241,18 @@ export function Dashboard({ place }: { place: Place }) {
     return refineHourlyWindow(hourly, fine, forecast?.current.time) ?? hourly;
   }, [hourly, windowDays, fine, forecast]);
   const refined = !!chartHourly && !!hourly && chartHourly !== hourly;
+
+  // Resolve a pending "Return to today" scrub: once the anchored window's data is in,
+  // drop the inspector line on "now" (and show its popover).
+  useEffect(() => {
+    if (!scrubToNow || !forecast || !chartHourly) return;
+    const idx = findNowIndex(chartHourly.time, forecast.current.time);
+    if (idx >= 0) {
+      setScrubIndex(idx);
+      setPopoverHidden(false);
+      setScrubToNow(false);
+    }
+  }, [scrubToNow, chartHourly, forecast]);
 
   const tempBand = useMemo(() => {
     if (!ciEnabled || !ensembleQ.data || !chartHourly) return null;
@@ -345,29 +390,41 @@ export function Dashboard({ place }: { place: Place }) {
     return true;
   });
 
-  if (forecastQ.isLoading && !forecast) {
-    return <DashboardSkeleton />;
-  }
-  if (forecastQ.isError || !forecast) {
-    return (
-      <div className="state state--error">
-        <p>Couldn’t load the forecast.</p>
-        <p className="state__detail">{(forecastQ.error as Error)?.message}</p>
-        <button className="btn" onClick={() => forecastQ.refetch()}>
-          Retry
-        </button>
-      </div>
-    );
-  }
+  // Warm the chart chunk as soon as the dashboard mounts — in parallel with the
+  // forecast fetch — so ECharts stays off the critical path yet is loaded by the time
+  // the data resolves and the blank placeholder gives way to the real meteogram.
+  useEffect(() => {
+    void loadMeteogram();
+  }, []);
+
+  // Drop any in-flight pan when the city changes: its target was computed against the
+  // old city's loaded range, and letting the tween settle would commit that viewStart.
+  useEffect(() => {
+    if (tweenRaf.current != null) cancelAnimationFrame(tweenRaf.current);
+    tweenRaf.current = null;
+    if (gesture.current?.raf != null) cancelAnimationFrame(gesture.current.raf);
+    gesture.current = null;
+  }, [placeId]);
+
+  // No early return for the loading state. The dashboard renders its full layout with
+  // every widget in place; the widgets themselves show "–" wherever a value would go
+  // until the data lands. Swapping the whole page for a skeleton is what made switching
+  // cities blink, and it threw away the chart and map instances along with it.
+  const current = forecast?.current ?? null;
+  const failed = forecastQ.isError && !forecast;
 
   const today = summaries.find((s) => s.date === todayKey);
   const startKey = win ? dayKey(win.start) : todayKey;
   const lastTime = hourly && hourly.time.length ? hourly.time[hourly.time.length - 1] : null;
   const endKey = lastTime ? dayKey(lastTime) : startKey;
   const windowSummaries = summaries.filter((s) => s.date >= startKey && s.date <= endKey);
-  const curTime = forecast.current.time;
+  const curTime = current?.time ?? null;
   const nowInWindow =
-    !!hourly && hourly.time.length > 0 && curTime >= hourly.time[0] && curTime <= hourly.time[hourly.time.length - 1];
+    !!curTime &&
+    !!hourly &&
+    hourly.time.length > 0 &&
+    curTime >= hourly.time[0] &&
+    curTime <= hourly.time[hourly.time.length - 1];
   const nowIso = nowInWindow ? curTime : null;
 
   const anchored = state.viewStart == null && dragStart == null;
@@ -474,23 +531,68 @@ export function Dashboard({ place }: { place: Place }) {
   }
 
   const hasHourly = !!chartHourly && chartHourly.time.length > 0;
+  // Reserve the exact height the real chart will take (day tiles ⇒ the taller
+  // "integrated" layout), so the placeholder → chart swap causes no reflow. Before any
+  // forecast has arrived we assume the integrated height: day tiles are the normal
+  // case, so guessing it keeps the panel from growing as the data fills in.
+  const chartHeight = !forecast || windowSummaries.length > 0 ? CHART_HEIGHT_INTEGRATED : CHART_HEIGHT;
   const emptyState = <div className="state state--empty">No data for this range.</div>;
+
+  // Mobile scrubber bounds. Clamp the (persistent) scrub index into the current window
+  // so a pan/zoom that shrinks the range can't leave it pointing past the end.
+  const scrubMax = Math.max(0, (chartHourly?.time.length ?? 0) - 1);
+  const scrubClamped = scrubIndex == null ? null : clamp(scrubIndex, 0, scrubMax);
+  // The index the label/line describe (the default mid-point until first engaged).
+  const scrubShown = scrubClamped ?? Math.floor(scrubMax / 2);
+  const scrubIso = chartHourly?.time[scrubShown];
+  const scrubLabel = scrubIso
+    ? `Details for ${dayKey(scrubIso) === todayKey ? formatTime(scrubIso) : `${formatDayShort(scrubIso)} ${formatTime(scrubIso)}`}`
+    : "Details";
+  // The toggle-switch is "on" when the popover is actually showing (engaged and not
+  // dismissed) — the label reads as an on/off control for the details popover.
+  const popoverOn = scrubIndex != null && !popoverHidden;
+  // Fraction (0–1) of "now" along the scrubber, for the tick mark — null when "now"
+  // isn't in the visible window (nothing to mark).
+  const nowScrubIdx = chartHourly && nowIso ? findNowIndex(chartHourly.time, nowIso) : -1;
+  const nowFrac = scrubMax > 0 && nowScrubIdx >= 0 && nowScrubIdx <= scrubMax ? nowScrubIdx / scrubMax : null;
+  // Tapping the details label toggles the popover; if the scrubber isn't engaged yet,
+  // the first tap engages it (line + popover at the shown index).
+  const onScrubLabel = () => {
+    if (scrubIndex == null) {
+      setScrubIndex(scrubShown);
+      setPopoverHidden(false);
+    } else {
+      setPopoverHidden((h) => !h);
+    }
+  };
 
   return (
     <div className="dashboard">
       <CurrentConditions
         place={place}
-        current={forecast.current}
+        current={current}
         today={today}
         units={state.units}
-        aqhi={currentAqhi}
-        aqi={currentAqi}
+        // `undefined` = the air panel is off, so the row is hidden; `null` = on but not
+        // loaded yet, so the row shows with dashes rather than appearing later.
+        aqhi={airEnabled ? currentAqhi : undefined}
+        aqi={airEnabled ? currentAqi : undefined}
         mini={miniWindow}
-        consensus={forecast.consensus}
+        consensus={forecast?.consensus}
       />
 
+      {failed ? (
+        <div className="state state--error">
+          <p>Couldn’t load the forecast.</p>
+          <p className="state__detail">{(forecastQ.error as Error)?.message}</p>
+          <button className="btn" onClick={() => forecastQ.refetch()}>
+            Retry
+          </button>
+        </div>
+      ) : null}
+
       <div className="panel meteogram-panel meteogram-panel--forecast">
-        <div className="meteogram-nav">
+        <div className={"meteogram-nav" + (compact ? " meteogram-nav--mobile" : "")}>
           <button
             type="button"
             className="meteogram-nav__range"
@@ -498,6 +600,7 @@ export function Dashboard({ place }: { place: Place }) {
               cancelTween();
               setDragStart(null);
               controls.setViewStart(null);
+              setScrubToNow(true); // snap the scrubber onto "now" once the reset lands
             }}
             disabled={anchored}
             title="Return to today"
@@ -511,6 +614,45 @@ export function Dashboard({ place }: { place: Place }) {
             <span className="meteogram-nav__res" title="Showing 15-minute detail for the near term (temperature, feels-like, and precipitation).">
               15-min
             </span>
+          ) : null}
+          {compact && scrubMax > 0 ? (
+            // The graph itself only pans/pinches on touch; THIS slider is what moves the
+            // inspector line. Engages (shows the line) on first touch, then stays put.
+            <div className="meteogram-scrub-group">
+              <button
+                type="button"
+                aria-pressed={popoverOn}
+                className={"meteogram-scrub-toggle" + (popoverOn ? " is-on" : "")}
+                onClick={onScrubLabel}
+                title="Show or hide the details popover"
+              >
+                {scrubLabel}
+              </button>
+              <div className="meteogram-scrub-track">
+                <input
+                  type="range"
+                  className="meteogram-scrub"
+                  min={0}
+                  max={scrubMax}
+                  step={1}
+                  value={scrubShown}
+                  aria-label="Move the data inspector line"
+                  onPointerDown={() => setScrubIndex((i) => i ?? scrubShown)}
+                  onChange={(e) => {
+                    setScrubIndex(Number(e.target.value));
+                    setPopoverHidden(false); // any scrub re-shows the popover
+                  }}
+                />
+                {nowFrac != null ? (
+                  <span
+                    className="meteogram-scrub-now"
+                    style={{ left: `calc(8px + ${nowFrac} * (100% - 16px))` }}
+                    aria-hidden="true"
+                    title="Now"
+                  />
+                ) : null}
+              </div>
+            </div>
           ) : null}
         </div>
 
@@ -535,24 +677,33 @@ export function Dashboard({ place }: { place: Place }) {
           >
             <div className="meteogram-anim" ref={setAnim}>
               {hasHourly ? (
-                <Meteogram
-                  hourly={chartHourly!}
-                  units={state.units}
-                  series={state.series}
-                  panels={chartPanels}
-                  tempBand={tempBand}
-                  precipBand={precipBand}
-                  nowIso={nowIso}
-                  currentIso={forecast.current.time}
-                  daily={windowSummaries}
-                  todayKey={todayKey}
-                  hidden={[...hidden]}
-                  air={airWindow}
-                  airIndex={airIndex}
-                  dailyAir={dailyAir}
-                />
-              ) : (
+                <Suspense fallback={<MeteogramPlaceholder height={chartHeight} />}>
+                  <Meteogram
+                    hourly={chartHourly!}
+                    units={state.units}
+                    series={state.series}
+                    panels={chartPanels}
+                    tempBand={tempBand}
+                    precipBand={precipBand}
+                    nowIso={nowIso}
+                    currentIso={current!.time}
+                    daily={windowSummaries}
+                    todayKey={todayKey}
+                    hidden={[...hidden]}
+                    air={airWindow}
+                    airIndex={airIndex}
+                    dailyAir={dailyAir}
+                    scrubIndex={scrubClamped}
+                    popoverHidden={popoverHidden}
+                  />
+                </Suspense>
+              ) : forecast ? (
+                // Loaded, but this window genuinely holds nothing.
                 emptyState
+              ) : (
+                // Still loading: hold the chart's exact box open rather than flashing
+                // "No data for this range." at a city that simply hasn't answered yet.
+                <MeteogramPlaceholder height={chartHeight} />
               )}
             </div>
           </div>
@@ -649,15 +800,13 @@ export function Dashboard({ place }: { place: Place }) {
       </div>
 
       {airEnabled ? (
-        airQ.data && aqhi ? (
-          <AirQualityPanel
-            data={airQ.data}
-            aqhi={aqhi}
-            nowIso={nowInWindow ? forecast.current.time : `${startKey}T12:00`}
-          />
-        ) : airQ.isLoading ? (
-          <AirPanelSkeleton />
-        ) : null
+        // Always mounted while the panel is on: it renders its own dashes until the
+        // data arrives, so the tiles never vanish and reappear on a city switch.
+        <AirQualityPanel
+          data={airQ.data ?? null}
+          aqhi={aqhi}
+          nowIso={nowInWindow && curTime ? curTime : startKey ? `${startKey}T12:00` : null}
+        />
       ) : null}
 
       <Suspense fallback={<RadarSkeleton />}>

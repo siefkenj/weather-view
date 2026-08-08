@@ -47,7 +47,11 @@ export function LocationPage() {
       routePlace && near(routePlace.latitude, parsed.latitude) && near(routePlace.longitude, parsed.longitude)
         ? routePlace
         : { name: parsed.name, latitude: parsed.latitude, longitude: parsed.longitude };
-    return <Dashboard key={placeToSlug(place)} place={place} />;
+    // Deliberately NOT keyed on the place: remounting per city tore the whole dashboard
+    // down — every widget blanked, and the Leaflet map and ECharts chart were rebuilt
+    // from scratch — which is what made a city switch blink. Dashboard resets its own
+    // per-place state instead, so the layout stays put and only the data refills.
+    return <Dashboard place={place} />;
   }
 
   // Need to geocode the label.

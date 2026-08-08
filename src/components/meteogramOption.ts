@@ -85,7 +85,25 @@ export interface MeteogramInput {
   airIndex?: AirMode;
   /** Compact (mobile) layout: drop units from the %/pressure axis labels to declutter. */
   compact?: boolean;
+  /** Mobile mode: the graph is for pan/pinch only — the tooltip never triggers on
+   *  touch-move; the scrubber shows it imperatively (dispatch showTip). */
+  mobile?: boolean;
+  /** Fixed tooltip placement (mobile): compute [x, y] px within the chart container.
+   *  Only used in mobile mode; desktop keeps ECharts' default follow-the-pointer. */
+  tooltipPosition?: TooltipPositionFn;
+  /** Mobile: the details label was tapped to dismiss the popover — keep the inspector
+   *  line but hide the stats box (`showContent: false`). Scrubbing re-shows it. */
+  popoverHidden?: boolean;
 }
+
+/** ECharts tooltip `position` as a function — the args we actually use. */
+export type TooltipPositionFn = (
+  point: [number, number],
+  params: unknown,
+  dom: HTMLElement,
+  rect: unknown,
+  size: { contentSize: [number, number]; viewSize: [number, number] },
+) => [number, number];
 
 const round1 = (n: number) => (Number.isFinite(n) ? Math.round(n * 10) / 10 : NaN);
 
@@ -592,7 +610,7 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
     backgroundColor: palette.tooltipBg,
     borderWidth: 0,
     textStyle: { color: palette.tooltipText, fontSize: 12 },
-    axisPointer: { type: "line", link: [{ xAxisIndex: "all" }], lineStyle: { color: palette.axisLabel } },
+    axisPointer: { type: "line", link: [{ xAxisIndex: "all" }], lineStyle: { color: palette.axisLabel, type: "dashed" } },
     formatter: (params: unknown) => {
       const arr = params as { seriesName: string; value: number; color: string; axisValue: string; dataIndex: number }[];
       if (!arr.length) return "";
@@ -651,6 +669,18 @@ export function buildMeteogramOption(input: MeteogramInput): EChartsOption {
       return `<div style="font-weight:600;margin-bottom:4px">${tooltipHeader(arr[0].axisValue)}</div>${rows}`;
     },
   };
+
+  // Mobile: the graph is for panning/pinching — only the scrubber moves the inspector
+  // line, so the tooltip must NOT trigger on touch-move. It's shown imperatively (the
+  // Meteogram dispatches showTip from the scrubber) and pinned to a fixed corner.
+  if (input.mobile) {
+    (tooltip as { triggerOn?: "none" }).triggerOn = "none";
+    // Dismissed popover ⇒ keep only the axis-pointer line, drop the stats box.
+    (tooltip as { showContent?: boolean }).showContent = !input.popoverHidden;
+  }
+  if (input.tooltipPosition) {
+    (tooltip as { position?: TooltipPositionFn }).position = input.tooltipPosition;
+  }
 
   // Colour the air-quality line(s) by risk band — the same band colours the map
   // overlay uses for this index (past + forecast segments).

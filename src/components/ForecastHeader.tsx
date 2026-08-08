@@ -7,6 +7,7 @@ import { aqhiCategory, formatAqhi } from "../utils/aqhi";
 import { aqiColor, type AirMode } from "../api/airQualityGrid";
 import { useAppDispatch, useAppSelector } from "../store";
 import { closeDay, openDay } from "../store/readoutSlice";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import type { DailySummary } from "../utils/series";
 
 const rgb = (c: [number, number, number]) => `rgb(${c[0]},${c[1]},${c[2]})`;
@@ -56,6 +57,16 @@ export function ForecastHeader({
   const readout = useAppSelector((s) => s.readout);
   const dispatch = useAppDispatch();
   const rowRef = useRef<HTMLDivElement>(null);
+  // On hover-capable devices the card follows the pointer (hover/focus open, leave/blur
+  // close). On touch there's no hover, so a tap TOGGLES the card via onClick instead —
+  // and we must NOT also open on the tap's synthetic mouseenter/focus, or the same tap
+  // that opens would immediately close it. So the hover/focus openers are gated here.
+  const canHover = useMediaQuery("(hover: hover)");
+
+  const toggle = (date: string, target: HTMLElement) => {
+    if (readout.kind === "day" && readout.date === date) dispatch(closeDay());
+    else open(date, target);
+  };
 
   // Map a day's noon onto the plot in the same linear way the chart's category axis
   // does (first sample at the left inset, last at the right), so tiles track the
@@ -69,7 +80,8 @@ export function ForecastHeader({
   const cellStyle = (date: string): React.CSSProperties => {
     const frac = (parseLocal(`${date}T12:00`).getTime() - t0) / span;
     return {
-      position: "absolute",
+      // position: relative comes from .fh-cell — the tile stays in grid flow so it
+      // contributes to the shared (tallest-tile) row height; left offsets it visually.
       left: `calc(${frac} * 100%)`,
       width: `calc(100% / ${spanDays} - 4px)`,
     };
@@ -106,10 +118,11 @@ export function ForecastHeader({
                 (readout.kind === "day" && readout.date === d.date ? " fh-cell--active" : "")
               }
               style={cellStyle(d.date)}
-              onMouseEnter={(e) => open(d.date, e.currentTarget)}
-              onMouseLeave={() => dispatch(closeDay())}
-              onFocus={(e) => open(d.date, e.currentTarget)}
-              onBlur={() => dispatch(closeDay())}
+              onMouseEnter={canHover ? (e) => open(d.date, e.currentTarget) : undefined}
+              onMouseLeave={canHover ? () => dispatch(closeDay()) : undefined}
+              onFocus={canHover ? (e) => open(d.date, e.currentTarget) : undefined}
+              onBlur={canHover ? () => dispatch(closeDay()) : undefined}
+              onClick={(e) => toggle(d.date, e.currentTarget)}
               aria-label={`${formatFullDate(d.date)}: ${wx.label}`}
             >
               <span className="fh-date">

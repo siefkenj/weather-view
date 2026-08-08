@@ -13,6 +13,14 @@ export const AXIS_GUTTER = 56;
  *  with the `.forecast-header__row` right inset in index.css. */
 export const AXIS_GUTTER_RIGHT_MOBILE = 8;
 
+/** Meteogram canvas height (px): the default, and the taller "integrated" height used
+ *  when the day/date tiles are drawn in the temperature panel's headroom. Exported so
+ *  the blank-chart placeholder can reserve the exact height the real chart will take —
+ *  the chart then draws into the same box with no reflow. Keep in sync with
+ *  `resolvedHeight` in Meteogram.tsx. */
+export const CHART_HEIGHT = 520;
+export const CHART_HEIGHT_INTEGRATED = 560;
+
 export interface HorizontalLayout {
   panelKeys: PanelName[];
   grids: { top: number; height: number }[];

@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { buildMeteogramOption, tempPanelVisible } from "./meteogramOption";
+import { buildMeteogramOption, tempPanelVisible, type TooltipPositionFn } from "./meteogramOption";
 import { ForecastHeader } from "./ForecastHeader";
-import { computeHorizontalLayout, tempTopEmptyFraction, TILE_BAND, LAYOUT_TOP_PAD } from "./meteogramLayout";
+import {
+  computeHorizontalLayout,
+  tempTopEmptyFraction,
+  TILE_BAND,
+  LAYOUT_TOP_PAD,
+  CHART_HEIGHT,
+  CHART_HEIGHT_INTEGRATED,
+} from "./meteogramLayout";
 import { useECharts } from "../hooks/useECharts";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTheme } from "../hooks/useTheme";
@@ -37,6 +44,12 @@ interface Props {
   airIndex?: AirMode;
   /** Peak air-quality value per day (YYYY-MM-DD → value) for the day popups. */
   dailyAir?: Map<string, number>;
+  /** Mobile scrubber position: the data index the inspector line sits at, or null when
+   *  the scrubber hasn't been engaged (no line shown). Drives an imperative showTip. */
+  scrubIndex?: number | null;
+  /** Mobile: hide the stats popover (keep only the inspector line). Toggled by the
+   *  details label above the scrubber. */
+  popoverHidden?: boolean;
 }
 
 const HOVER_BOOST = 1.8;
@@ -55,19 +68,22 @@ export function Meteogram({
   precipBand,
   nowIso,
   currentIso,
-  height = 520,
+  height = CHART_HEIGHT,
   daily,
   todayKey,
   hidden,
   air,
   airIndex,
   dailyAir,
+  scrubIndex,
+  popoverHidden,
 }: Props) {
   const { theme } = useTheme();
   const dispatch = useAppDispatch();
   const integrated = !!daily && daily.length > 0;
   const palette = chartPalette(theme);
-  // Mobile: strip units from the %/pressure axis labels to save horizontal space.
+  // Mobile: strip units from the %/pressure axis labels to save horizontal space. Also
+  // the "mobile mode" flag: the graph is pan/pinch-only and the scrubber drives the line.
   const compact = useMediaQuery("(max-width: 640px)");
   // The caller (chartPanels) already decides whether the air panel is on — keep it
   // even without data, so the axis still shows (an empty air panel).
@@ -76,6 +92,32 @@ export function Meteogram({
   // React; the tooltip formatter reads it live to bold the matching row.
   const hoveredRef = useRef<string | null>(null);
   const getHovered = useCallback(() => hoveredRef.current, []);
+  // Outer graph box + the day-icon overlay, read by the mobile popup placement below.
+  const graphRef = useRef<HTMLDivElement>(null);
+  const graphDatesRef = useRef<HTMLDivElement>(null);
+
+  // Fixed placement for the mobile stats popup: a bottom corner on the side AWAY from
+  // the inspector line (so it never overlaps it); shifted up if it would run off the
+  // bottom of the screen; but never rising above the bottom of the day-icon buttons.
+  const scrubPos = useCallback<TooltipPositionFn>((point, _p, _dom, _rect, size) => {
+    const [w, h] = size.contentSize;
+    const [cw, ch] = size.viewSize;
+    const M = 8;
+    const putLeft = point[0] > cw / 2; // line on the right half ⇒ popup bottom-LEFT
+    const x = putLeft ? M : Math.max(M, cw - w - M);
+    let y = ch - h - M; // rest at the bottom of the plot
+    const box = graphRef.current?.getBoundingClientRect();
+    if (box) {
+      const offBottom = box.top + y + h - (window.innerHeight - M);
+      if (offBottom > 0) y -= offBottom; // shift up to stay on screen
+    }
+    const dates = graphDatesRef.current?.getBoundingClientRect();
+    if (box && dates) {
+      const capY = dates.bottom - box.top; // never above the day-icon buttons
+      if (y < capY) y = capY;
+    }
+    return [x, y];
+  }, []);
 
   const option = useMemo(() => {
     return buildMeteogramOption({
@@ -94,9 +136,12 @@ export function Meteogram({
       air,
       airIndex,
       compact,
+      mobile: compact,
+      tooltipPosition: compact ? scrubPos : undefined,
+      popoverHidden,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hourly, units, series.join(","), effPanels.join(","), tempBand, precipBand, nowIso, currentIso, theme, integrated, (hidden ?? []).join(","), air, airIndex, compact]);
+  }, [hourly, units, series.join(","), effPanels.join(","), tempBand, precipBand, nowIso, currentIso, theme, integrated, (hidden ?? []).join(","), air, airIndex, compact, popoverHidden]);
 
   const { containerRef: ref, chartRef } = useECharts(option);
 
@@ -174,7 +219,35 @@ export function Meteogram({
     };
   }, [chartRef, dispatch]);
 
-  const resolvedHeight = integrated ? 560 : height;
+  // Mobile: the scrubber (not a touch on the graph) drives the inspector line + stats
+  // popup — show them at the scrubbed index, or hide when it hasn't been engaged. Desktop
+  // ignores this and keeps the follow-the-pointer tooltip. Re-runs on `option` so the tip
+  // is re-shown after each data re-render (setOption clears it).
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !compact) return;
+    if (scrubIndex == null) {
+      chart.dispatchAction({ type: "hideTip" });
+      return;
+    }
+    const list = (chart.getOption().series ?? []) as { type?: string; name?: string; data?: unknown[] }[];
+    const isLine = (s: { type?: string; name?: string }) =>
+      s?.type === "line" && !!s.name && !s.name.startsWith("_");
+    // Each line is split into a PAST and a FORECAST series, NaN-padded on the other side
+    // of "now" — so a fixed series index only has a data point on one side and showTip
+    // silently no-ops past it. Pick whichever segment actually has a finite value AT the
+    // scrubbed index, so the line shows in the future as well as the past.
+    const finiteAt = (s: { data?: unknown[] }) => {
+      const v = s.data?.[scrubIndex];
+      return typeof v === "number" && Number.isFinite(v);
+    };
+    let si = list.findIndex((s) => isLine(s) && finiteAt(s));
+    if (si < 0) si = list.findIndex(isLine);
+    if (si < 0) si = 0;
+    chart.dispatchAction({ type: "showTip", seriesIndex: si, dataIndex: scrubIndex });
+  }, [compact, scrubIndex, option, chartRef]);
+
+  const resolvedHeight = integrated ? CHART_HEIGHT_INTEGRATED : height;
 
   // Whether the temperature panel is laid out (all temp lines off ⇒ it's dropped). Must
   // match the option builder so the tile overlay lines up with the chart grids.
@@ -194,7 +267,7 @@ export function Meteogram({
   }, [integrated, effPanels, showTempPanel]);
 
   return (
-    <div className="meteogram-graph" style={{ position: "relative" }}>
+    <div className="meteogram-graph" style={{ position: "relative" }} ref={graphRef}>
       <div
         ref={ref}
         className="meteogram"
@@ -204,6 +277,7 @@ export function Meteogram({
       {integrated && band && daily ? (
         <div
           className="graph-dates"
+          ref={graphDatesRef}
           style={{
             top: `calc(${band.top}% - ${DATE_BAND_PAD}px)`,
             height: `calc(${band.height}% + ${2 * DATE_BAND_PAD}px)`,
