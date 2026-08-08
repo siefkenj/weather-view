@@ -11,6 +11,7 @@ import { useDashboardState } from "../hooks/useUrlState";
 import { useTheme } from "../hooks/useTheme";
 import { cacheStats, clearCache, type CacheStats } from "../api/httpCache";
 import { clearStatusErrors } from "../status/statusStore";
+import type { Place } from "../api/types";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -19,7 +20,7 @@ function formatBytes(bytes: number): string {
   return `${(kb / 1024).toFixed(1)} MB`;
 }
 
-export function SettingsMenu() {
+export function SettingsMenu({ place }: { place?: Place }) {
   const { state, ...controls } = useDashboardState();
   const { theme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
@@ -108,7 +109,11 @@ export function SettingsMenu() {
 
           <div className="settings__section">
             <span className="settings__heading">Models</span>
-            <ModelPicker selected={state.extraModels} onChange={controls.setExtraModels} />
+            <ModelPicker
+              selected={state.extraModels}
+              onChange={controls.setExtraModels}
+              place={place}
+            />
           </div>
 
           <div className="settings__section">

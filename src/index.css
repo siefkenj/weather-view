@@ -1814,3 +1814,51 @@ button {
   opacity: 0.5;
   cursor: default;
 }
+
+/* ---------- "Find best combination" (model optimizer) ---------- */
+.best-finder {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.best-finder__go {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+}
+.spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-weak);
+  border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite;
+  flex: none;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.best-finder__err {
+  margin: 0;
+  font-size: 12px;
+  color: var(--hi);
+}
+.best-finder__caption {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+.best-finder__caption strong {
+  color: var(--text);
+}
+.best-finder__note {
+  color: var(--feels);
+}

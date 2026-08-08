@@ -122,18 +122,17 @@ const BBOX_LAT = 0.65;
 // A station counts as active if it reported hourly data within this many days.
 const ACTIVE_DAYS = 60;
 
-export async function fetchStationPrecip(
-  params: StationPrecipParams,
+/** The nearest active hourly ECCC station to a point, or null (e.g. outside Canada).
+ *  A city-sized bbox can hold hundreds of stations (mostly daily/closed), so we pull
+ *  them all — trimmed to the fields we filter on (geometry is returned regardless) —
+ *  and pick the nearest active hourly one client-side. Server-side HAS_HOURLY_DATA
+ *  filtering and sortby on the date fields are unsupported/erratic here. */
+export async function fetchNearestStation(
+  lat: number,
+  lon: number,
   signal?: AbortSignal,
-): Promise<StationPrecip> {
-  const empty: StationPrecip = { station: null, precipByIso: {} };
-  if (!params.timezone) return empty; // can't align to the grid without a zone
-  const { latitude: lat, longitude: lon } = params;
+): Promise<EcccStation | null> {
   const bbox = `${lon - BBOX_LON},${lat - BBOX_LAT},${lon + BBOX_LON},${lat + BBOX_LAT}`;
-  // A city-sized bbox can hold hundreds of stations (mostly daily/closed), so pull them
-  // all — trimmed to the fields we filter on (geometry is returned regardless) — and pick
-  // the nearest active hourly one client-side. Server-side HAS_HOURLY_DATA filtering and
-  // sortby on the date fields are unsupported/erratic here, hence the client-side pass.
   const stations = await fetchJson<{ features?: GeoFeature[] }>(
     buildUrl(STATIONS_URL, {
       bbox,
@@ -144,7 +143,16 @@ export async function fetchStationPrecip(
     { label: "gauge stations", signal, cache: true },
   );
   const cutoff = new Date(Date.now() - ACTIVE_DAYS * 86_400_000).toISOString().slice(0, 10);
-  const station = pickNearestStation(stations.features ?? [], lat, lon, cutoff);
+  return pickNearestStation(stations.features ?? [], lat, lon, cutoff);
+}
+
+export async function fetchStationPrecip(
+  params: StationPrecipParams,
+  signal?: AbortSignal,
+): Promise<StationPrecip> {
+  const empty: StationPrecip = { station: null, precipByIso: {} };
+  if (!params.timezone) return empty; // can't align to the grid without a zone
+  const station = await fetchNearestStation(params.latitude, params.longitude, signal);
   if (!station) return empty;
 
   // The most recent ~600 hourly rows (~25 days) cover the past window without date math.
@@ -159,4 +167,42 @@ export async function fetchStationPrecip(
     { label: "gauge precip", signal, cache: true },
   );
   return { station, precipByIso: buildPrecipMap(hourly.features ?? [], params.timezone) };
+}
+
+export interface StationPrecipUtc {
+  station: EcccStation | null;
+  /** Measured hourly precip (mm) keyed by UTC hour ("YYYY-MM-DDTHH:mm"). */
+  precipByUtc: Record<string, number>;
+}
+
+/** Measured hourly precip for the nearest gauge over [startDate, endDate], keyed by UTC
+ *  hour (no timezone conversion — used by the model-timing optimizer, which works in UTC). */
+export async function fetchStationPrecipWindowUtc(
+  point: { latitude: number; longitude: number },
+  startDate: string,
+  endDate: string,
+  signal?: AbortSignal,
+): Promise<StationPrecipUtc> {
+  const station = await fetchNearestStation(point.latitude, point.longitude, signal);
+  if (!station) return { station: null, precipByUtc: {} };
+  const hourly = await fetchJson<{ features?: GeoFeature[] }>(
+    buildUrl(HOURLY_URL, {
+      STN_ID: station.stnId,
+      datetime: `${startDate}T00:00:00/${endDate}T23:00:00`,
+      properties: "UTC_DATE,PRECIP_AMOUNT",
+      limit: 3000,
+      f: "json",
+    }),
+    { label: "gauge history", signal, cache: true },
+  );
+  const precipByUtc: Record<string, number> = {};
+  for (const f of hourly.features ?? []) {
+    const p = f.properties ?? {};
+    const utc = p.UTC_DATE;
+    const amt = p.PRECIP_AMOUNT;
+    if (typeof utc === "string" && typeof amt === "number" && Number.isFinite(amt)) {
+      precipByUtc[utc.slice(0, 16)] = amt;
+    }
+  }
+  return { station, precipByUtc };
 }

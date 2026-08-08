@@ -85,7 +85,7 @@ export function CurrentConditions({ place, current, today, units, aqhi, aqi, min
       <StatusBar />
       <div className="current__actions">
         <LocationSearch ref={searchRef} onSelect={goToPlace} currentKey={currentKey} />
-        <SettingsMenu />
+        <SettingsMenu place={place} />
       </div>
       <div className="current__today">
         <div className="current__date">{formatWeekdayLong(current.time)}</div>
