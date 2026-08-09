@@ -20,6 +20,13 @@
 const PREFIX = "wv:cache:v1:";
 const HARD_TTL_MS = 2 * 24 * 60 * 60 * 1000; // ~2 days
 const MAX_ENTRIES = 60; // rough bound so grid pans/zooms can't fill the quota
+/** Byte bound, enforced alongside MAX_ENTRIES. A count-only bound is no defence against a
+ *  few very large entries: the optimizer's 90-day history downloads run to hundreds of KB
+ *  each, so a handful can exhaust the origin quota while sitting far under MAX_ENTRIES.
+ *  Nothing would then be evicted, the retry in `writeCache` would fail, and every later
+ *  write — forecast, air quality, radar — would fail silently, taking the stale-fallback
+ *  that http.ts leans on when rate-limited or offline down with it. */
+const MAX_BYTES = 3 * 1024 * 1024; // ~3 MB of a typical 5 MB origin quota
 
 interface Entry<T> {
   /** Fetched-at, ms epoch. */
@@ -49,11 +56,19 @@ function namespaceKeys(s: Storage): string[] {
   return keys;
 }
 
-function entryAt(s: Storage, key: string): number {
+/** An entry's fetched-at stamp and its approximate footprint, in one read. */
+function entryMeta(s: Storage, key: string): { at: number; bytes: number } {
+  let raw: string | null;
   try {
-    return (JSON.parse(s.getItem(key) ?? "{}") as Entry<unknown>).at ?? 0;
+    raw = s.getItem(key);
   } catch {
-    return 0;
+    return { at: 0, bytes: 0 };
+  }
+  const bytes = key.length + (raw?.length ?? 0);
+  try {
+    return { at: (JSON.parse(raw ?? "{}") as Entry<unknown>).at ?? 0, bytes };
+  } catch {
+    return { at: 0, bytes };
   }
 }
 
@@ -118,14 +133,15 @@ export function writeCache<T>(url: string, body: T): void {
   }
 }
 
-/** Drop hard-expired entries; if `aggressive`, also trim to MAX_ENTRIES (oldest first). */
+/** Drop hard-expired entries; if `aggressive`, also evict oldest-first until the survivors
+ *  are within BOTH bounds (MAX_ENTRIES and MAX_BYTES). */
 export function pruneCache(aggressive: boolean): void {
   const s = store();
   if (!s) return;
   const now = Date.now();
-  const live: { key: string; at: number }[] = [];
+  const live: { key: string; at: number; bytes: number }[] = [];
   for (const key of namespaceKeys(s)) {
-    const at = entryAt(s, key);
+    const { at, bytes } = entryMeta(s, key);
     if (at === 0 || now - at > HARD_TTL_MS) {
       try {
         s.removeItem(key);
@@ -133,18 +149,22 @@ export function pruneCache(aggressive: boolean): void {
         /* ignore */
       }
     } else {
-      live.push({ key, at });
+      live.push({ key, at, bytes });
     }
   }
-  if (aggressive && live.length > MAX_ENTRIES) {
-    live.sort((a, b) => a.at - b.at); // oldest first
-    for (const { key } of live.slice(0, live.length - MAX_ENTRIES)) {
-      try {
-        s.removeItem(key);
-      } catch {
-        /* ignore */
-      }
+  if (!aggressive) return;
+  live.sort((a, b) => a.at - b.at); // oldest first
+  let count = live.length;
+  let bytes = live.reduce((sum, e) => sum + e.bytes, 0);
+  for (const e of live) {
+    if (count <= MAX_ENTRIES && bytes <= MAX_BYTES) break;
+    try {
+      s.removeItem(e.key);
+    } catch {
+      /* ignore */
     }
+    count--;
+    bytes -= e.bytes;
   }
 }
 

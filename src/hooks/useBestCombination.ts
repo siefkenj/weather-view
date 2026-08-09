@@ -20,7 +20,7 @@ export interface BestComboResult {
   truthLabel: string;
   /** Ranked combinations, best rain-timing first; empty if there was too little rain. */
   combos: Combination[];
-  /** The recommendation: simplest combo within one standard error of the best score. */
+  /** The recommendation: the top-scoring combination outright (see utils/modelEval). */
   best: Combination | null;
   /** Observed rain EVENTS scored (context for the panel). */
   events: number;

@@ -18,6 +18,20 @@ const ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive";
  *  would hand it the ranking, so reanalysis truth stops this far short of the window. */
 export const REANALYSIS_LAG_DAYS = 6;
 
+/** Fraction of the window a rain gauge must actually report before it is preferred over
+ *  ERA5. Stations open and close mid-window and some are seasonal, so "returned at least
+ *  one row" is no evidence of a usable record — a station covering two weeks of a 96-day
+ *  window would otherwise win and throw away 90 days of usable reanalysis truth. */
+export const MIN_GAUGE_COVERAGE = 0.8;
+
+/** Whole hours spanned by an inclusive [startDate, endDate] day window; 0 if unparseable. */
+function windowHours(startDate: string, endDate: string): number {
+  const a = Date.parse(`${startDate}T00:00Z`);
+  const b = Date.parse(`${endDate}T00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return 0;
+  return (b - a) / 3_600_000 + 24;
+}
+
 function buildUrl(base: string, params: Record<string, string | number>): string {
   const url = new URL(base);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
@@ -60,7 +74,9 @@ export async function fetchModelPrecipHistory(
   const h = resp.hourly;
   const byModel: Record<string, Record<string, number>> = {};
   const models: string[] = [];
-  if (h) {
+  // `time` is typed as present but comes off the wire — an `hourly` block without it
+  // should yield an empty result, not a TypeError.
+  if (h && Array.isArray(h.time)) {
     for (const id of ids) {
       const col = h[`precipitation_${id}`];
       if (!Array.isArray(col)) continue;
@@ -155,8 +171,19 @@ export async function fetchTruthPrecip(
   endDate: string,
   signal?: AbortSignal,
 ): Promise<TruthPrecip> {
-  const gauge = await fetchStationPrecipWindowUtc(place, startDate, endDate, signal);
-  if (gauge.station && Object.keys(gauge.precipByUtc).length > 0) {
+  // The gauge lookup hits Environment Canada for EVERY location on earth — the request
+  // isn't gated to Canada, it just returns no station elsewhere. So its failures are not
+  // Canadian problems: out-of-range bboxes near the poles/antimeridian answer HTTP 500,
+  // and any ECCC outage or rate-limit does the same. None of that should sink a run that
+  // ERA5 can serve perfectly well, so a failed gauge lookup falls through to reanalysis.
+  const gauge = await fetchStationPrecipWindowUtc(place, startDate, endDate, signal).catch(
+    (err: unknown) => {
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
+      return { station: null, precipByUtc: {} };
+    },
+  );
+  const hours = Object.keys(gauge.precipByUtc).length;
+  if (gauge.station && hours >= MIN_GAUGE_COVERAGE * windowHours(startDate, endDate)) {
     const s = gauge.station;
     return {
       source: "gauge",
@@ -173,8 +200,10 @@ export async function fetchTruthPrecip(
     source: "reanalysis",
     label: "ERA5 reanalysis",
     point,
+    // `>=`, not `>`: the endpoint's window is inclusive, so era5End === startDate is a
+    // full valid day of truth rather than an empty request.
     precip:
-      era5End > startDate
+      era5End >= startDate
         ? await fetchReanalysisPrecip(point, startDate, era5End, signal)
         : {},
     station: null,

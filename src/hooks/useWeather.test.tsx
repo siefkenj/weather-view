@@ -11,13 +11,24 @@ import type { ReactNode } from "react";
 import type { ForecastResponse, Place } from "../api/types";
 
 const fetchForecast = vi.fn();
+const never = () => new Promise<never>(() => {});
 
 vi.mock("../api/openMeteo", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/openMeteo")>()),
   fetchForecast: (...args: unknown[]) => fetchForecast(...args),
+  // The grouped hook also opens these; stub them so nothing reaches the network.
+  fetchMinutely: () => never(),
+  fetchEnsemble: () => never(),
+  fetchAirQuality: () => never(),
+  fetchArchive: () => never(),
+}));
+vi.mock("../api/eccc", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/eccc")>()),
+  fetchStationPrecip: () => never(),
 }));
 
-const { useForecast } = await import("./useWeather");
+const { useForecast, useLocationWeather, FULL_PAST_DAYS } = await import("./useWeather");
+const { MAX_FORECAST_DAYS } = await import("../api/openMeteo");
 const { openMeteoApi } = await import("../store/openMeteoApi");
 const { viewReducer } = await import("../store/viewSlice");
 const { themeReducer } = await import("../store/themeSlice");
@@ -103,5 +114,35 @@ describe("useForecast across a city switch", () => {
 
     wide.release?.();
     await waitFor(() => expect(result.current.isFetching).toBe(false));
+  });
+});
+
+describe("useLocationWeather range staging", () => {
+  const OPTS_STAGED = { initialForecastDays: 3, initialPastDays: 0 };
+  const daysOf = () => fetchForecast.mock.calls.map(([a]) => (a as { forecastDays: number }).forecastDays);
+
+  it("stages a first visit, but goes straight to the full range on a return visit", async () => {
+    fetchForecast.mockImplementation(async (arg: { latitude: number }) =>
+      forecastFor(arg.latitude === TORONTO.latitude ? TORONTO : VANCOUVER),
+    );
+    const { result, rerender } = renderHook((place: Place) => useLocationWeather(place, OPTS_STAGED), {
+      wrapper: wrapper(), // one store for the whole run, so B→A finds A still cached
+      initialProps: TORONTO,
+    });
+
+    // First visit: narrow window for a fast paint, then the full range behind it.
+    await waitFor(() => expect(daysOf()).toEqual([3, MAX_FORECAST_DAYS]));
+    expect(fetchForecast.mock.calls[1][0]).toMatchObject({ pastDays: FULL_PAST_DAYS });
+
+    rerender(VANCOUVER);
+    await waitFor(() => expect(result.current.forecast.data?.latitude).toBe(VANCOUVER.latitude));
+
+    // Back to Toronto within keepUnusedDataFor: its entry still holds 16+20 days. Staging
+    // again would refetch INTO that entry (forceRefetch keys on the range), visibly
+    // collapsing the chart to 3 days before expanding it a second time.
+    fetchForecast.mockClear();
+    rerender(TORONTO);
+    await waitFor(() => expect(result.current.forecast.data?.latitude).toBe(TORONTO.latitude));
+    expect(daysOf()).not.toContain(3);
   });
 });

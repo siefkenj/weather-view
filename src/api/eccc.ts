@@ -185,12 +185,21 @@ export async function fetchStationPrecipWindowUtc(
 ): Promise<StationPrecipUtc> {
   const station = await fetchNearestStation(point.latitude, point.longitude, signal);
   if (!station) return { station: null, precipByUtc: {} };
+  // Size the limit to the window rather than hard-coding one. Features come back
+  // UNORDERED, so hitting the cap wouldn't truncate the tail — it would hand back an
+  // arbitrary subset of the window, which is far worse than a short series. The extra
+  // day of headroom covers the LOCAL_DATE/UTC_DATE offset (ECCC's `datetime` filter
+  // applies to LOCAL_DATE, so the UTC rows returned straddle the window edges).
+  const days = Math.round(
+    (Date.parse(`${endDate}T00:00Z`) - Date.parse(`${startDate}T00:00Z`)) / 86_400_000,
+  );
+  const limit = (Number.isFinite(days) && days > 0 ? days + 2 : 400) * 24;
   const hourly = await fetchJson<{ features?: GeoFeature[] }>(
     buildUrl(HOURLY_URL, {
       STN_ID: station.stnId,
       datetime: `${startDate}T00:00:00/${endDate}T23:00:00`,
       properties: "UTC_DATE,PRECIP_AMOUNT",
-      limit: 3000,
+      limit,
       f: "json",
     }),
     { label: "gauge history", signal, cache: true },

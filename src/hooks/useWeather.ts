@@ -3,8 +3,10 @@
 // unchanged and re-add the one TanStack behaviour we relied on: keeping the last
 // data on screen while a new fetch is in flight (`keepPreviousData`).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSelector } from "react-redux";
 import {
+  openMeteoApi,
   placeKey,
   useAirQualityQuery,
   useArchiveQuery,
@@ -197,7 +199,32 @@ interface LocationOptions {
  */
 export function useLocationWeather(place: Place, options: LocationOptions = {}) {
   const key = placeKey(place);
-  const [loadFull, setLoadFull] = useState(false);
+  const extraModels = useDebouncedModels(options.extraModels, 350);
+
+  // Does this location's entry ALREADY hold the full range? Within keepUnusedDataFor a
+  // return visit (A → B → A) finds stage-2 data still cached, and staging again would
+  // refetch into that same entry — forceRefetch keys on the range — visibly collapsing
+  // 16+20 days back to the initial window before expanding it a second time. The entry
+  // is keyed on location + model set, so ask for it with the full-range args.
+  const selectFull = useMemo(
+    () =>
+      openMeteoApi.endpoints.forecast.select({
+        latitude: place.latitude,
+        longitude: place.longitude,
+        timezone: place.timezone,
+        forecastDays: MAX_FORECAST_DAYS,
+        pastDays: FULL_PAST_DAYS,
+        extraModels,
+      }),
+    [place.latitude, place.longitude, place.timezone, extraModels],
+  );
+  const cachedFull = useSelector(selectFull);
+  const alreadyFull =
+    cachedFull.data !== undefined &&
+    cachedFull.originalArgs?.forecastDays === MAX_FORECAST_DAYS &&
+    cachedFull.originalArgs?.pastDays === FULL_PAST_DAYS;
+
+  const [loadFull, setLoadFull] = useState(alreadyFull);
   // The dashboard is no longer remounted per city, so the staging flag has to be reset
   // here — otherwise a second city would skip its fast first request and wait on the
   // full range. Resetting during render (rather than in an effect) keeps the very first
@@ -205,13 +232,12 @@ export function useLocationWeather(place: Place, options: LocationOptions = {}) 
   const [keyAt, setKeyAt] = useState(key);
   if (keyAt !== key) {
     setKeyAt(key);
-    setLoadFull(false);
+    setLoadFull(alreadyFull);
   }
   const forecastDays = loadFull
     ? MAX_FORECAST_DAYS
     : Math.min(MAX_FORECAST_DAYS, options.initialForecastDays ?? MAX_FORECAST_DAYS);
   const pastDays = loadFull ? FULL_PAST_DAYS : Math.min(FULL_PAST_DAYS, options.initialPastDays ?? 0);
-  const extraModels = useDebouncedModels(options.extraModels, 350);
   const forecast = useForecast(place, { forecastDays, pastDays, extraModels });
 
   // Expand to the full range once the visible window has painted.

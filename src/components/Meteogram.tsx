@@ -241,7 +241,16 @@ export function Meteogram({
       const v = s.data?.[scrubIndex];
       return typeof v === "number" && Number.isFinite(v);
     };
+    // Prefer a line (it carries the nicest inspector readout), but fall back to ANY
+    // visible series with a finite value there before falling back to a line blindly.
+    // The tooltip is axis-triggered, so a bar anchors it just as well — and picking a
+    // line without re-checking finiteness is how this silently died: with every
+    // temperature series toggled off, the only line left is "Chance of precip", which is
+    // NaN for every hour before `currentIso`, so scrubbing into the past produced a
+    // showTip that no-op'd — scrubber label updating, no line and no popover.
+    const named = (s: { name?: string }) => !!s.name && !s.name.startsWith("_");
     let si = list.findIndex((s) => isLine(s) && finiteAt(s));
+    if (si < 0) si = list.findIndex((s) => named(s) && finiteAt(s));
     if (si < 0) si = list.findIndex(isLine);
     if (si < 0) si = 0;
     chart.dispatchAction({ type: "showTip", seriesIndex: si, dataIndex: scrubIndex });

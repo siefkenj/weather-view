@@ -48,6 +48,26 @@ describe("httpCache maintenance", () => {
     expect(readCache<{ v: number }>("new")).toMatchObject({ body: { v: 1 } });
   });
 
+  it("evicts by SIZE, not just entry count, so a few huge entries can't wedge the cache", () => {
+    // The optimizer's 90-day history downloads are hundreds of KB each. A count-only
+    // bound (MAX_ENTRIES = 60) never fires for a handful of them, so nothing was evicted
+    // on a quota failure and every later write — forecast, air quality, radar — failed
+    // silently from then on.
+    const big = "x".repeat(600_000); // ~600 KB per entry, 6 entries ≈ 3.6 MB
+    for (let i = 0; i < 6; i++) {
+      vi.setSystemTime(T0 + i * 1000); // distinct ages so "oldest first" is well defined
+      writeCache(`big${i}`, big);
+    }
+    expect(cacheStats().count).toBe(6); // far under MAX_ENTRIES — count alone won't act
+    pruneCache(true);
+    const after = cacheStats();
+    expect(after.bytes).toBeLessThanOrEqual(3 * 1024 * 1024);
+    expect(after.count).toBeLessThan(6);
+    // Oldest go first, so the most recent write must survive.
+    expect(readCache("big5")).not.toBeNull();
+    expect(readCache("big0")).toBeNull();
+  });
+
   it("clearCache removes every namespaced entry and reports the count", () => {
     writeCache("a", 1);
     writeCache("b", 2);

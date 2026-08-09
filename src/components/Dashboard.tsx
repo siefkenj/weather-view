@@ -5,6 +5,7 @@ import { AXIS_GUTTER, AXIS_GUTTER_RIGHT_MOBILE, CHART_HEIGHT, CHART_HEIGHT_INTEG
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { AirQualityPanel } from "./AirQualityPanel";
 import { MeteogramPlaceholder, RadarSkeleton } from "./Skeletons";
+import { ChunkBoundary } from "./ChunkBoundary";
 import type { AirMode } from "../api/airQualityGrid";
 import { useDashboardState } from "../hooks/useUrlState";
 import { useTheme } from "../hooks/useTheme";
@@ -93,10 +94,16 @@ export function Dashboard({ place }: { place: Place }) {
   // overrides the committed `viewStart` so the chart re-renders with real data as
   // you scroll, without touching redux/URL until the motion settles.
   const [dragStart, setDragStart] = useState<string | null>(null);
-  // Mobile only: the data index the inspector line/scrubber sits at, or null when the
-  // scrubber hasn't been engaged (no line). On mobile a graph touch pans/pinches only —
-  // this scrubber is the sole way to move the inspector line (see the nav slider below).
-  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  // Mobile only: the TIME the inspector line/scrubber sits at, or null when the scrubber
+  // hasn't been engaged (no line). On mobile a graph touch pans/pinches only — this
+  // scrubber is the sole way to move the inspector line (see the nav slider below).
+  //
+  // A timestamp, not the raw index it looks like: `chartHourly` switches between the
+  // hourly and the 15-minute grid (zooming in/out past REFINE_MAX_DAYS, or `fine`
+  // arriving after the forecast), and an index means a different moment on each. Holding
+  // an index made the line silently jump by up to 4× when the resolution changed, with
+  // no user action. The index is re-derived from this anchor below.
+  const [scrubAt, setScrubAt] = useState<string | null>(null);
   // Mobile: whether the details label tapped the stats popover closed (the inspector
   // line stays). Any scrub re-shows it (see the scrubber's onChange).
   const [popoverHidden, setPopoverHidden] = useState(false);
@@ -159,8 +166,12 @@ export function Dashboard({ place }: { place: Place }) {
     setPlaceAt(placeId);
     setInitial(initialFor(place));
     setDragStart(null);
-    setScrubIndex(null);
+    setScrubAt(null);
     setPopoverHidden(false);
+    // Also the pending "snap to now" request: left set, a "Return to today" pressed
+    // before the old city's forecast landed would fire against the NEW city and pop a
+    // popover open on a place that was never scrubbed.
+    setScrubToNow(false);
   }
 
   // All weather for this location, grouped as sub-objects under its lon,lat key.
@@ -244,15 +255,22 @@ export function Dashboard({ place }: { place: Place }) {
 
   // Resolve a pending "Return to today" scrub: once the anchored window's data is in,
   // drop the inspector line on "now" (and show its popover).
+  // `compact` gates it: the scrubber is mobile-only UI, and dropping a line for a desktop
+  // "Return to today" left a latent one that popped a popover open the moment the
+  // viewport narrowed past the breakpoint (rotate, resize, dev tools).
   useEffect(() => {
     if (!scrubToNow || !forecast || !chartHourly) return;
+    if (!compact) {
+      setScrubToNow(false); // desktop has no scrubber — just drop the request
+      return;
+    }
     const idx = findNowIndex(chartHourly.time, forecast.current.time);
     if (idx >= 0) {
-      setScrubIndex(idx);
+      setScrubAt(chartHourly.time[idx]);
       setPopoverHidden(false);
       setScrubToNow(false);
     }
-  }, [scrubToNow, chartHourly, forecast]);
+  }, [scrubToNow, chartHourly, forecast, compact]);
 
   const tempBand = useMemo(() => {
     if (!ciEnabled || !ensembleQ.data || !chartHourly) return null;
@@ -538,19 +556,35 @@ export function Dashboard({ place }: { place: Place }) {
   const chartHeight = !forecast || windowSummaries.length > 0 ? CHART_HEIGHT_INTEGRATED : CHART_HEIGHT;
   const emptyState = <div className="state state--empty">No data for this range.</div>;
 
-  // Mobile scrubber bounds. Clamp the (persistent) scrub index into the current window
-  // so a pan/zoom that shrinks the range can't leave it pointing past the end.
+  // Mobile scrubber bounds. Resolve the anchored time back to an index on whatever grid
+  // is current, then clamp, so neither a resolution switch nor a pan/zoom that shrinks
+  // the range can leave the line pointing at the wrong moment (or past the end).
   const scrubMax = Math.max(0, (chartHourly?.time.length ?? 0) - 1);
-  const scrubClamped = scrubIndex == null ? null : clamp(scrubIndex, 0, scrubMax);
+  const scrubClamped = useMemo(() => {
+    if (scrubAt == null || !chartHourly) return null;
+    // Exact first: findNowIndex matches to the hour, which on the 15-minute grid would
+    // snap a :15 anchor forward to that hour's last quarter.
+    const exact = chartHourly.time.indexOf(scrubAt);
+    const i = exact >= 0 ? exact : findNowIndex(chartHourly.time, scrubAt);
+    return clamp(i < 0 ? 0 : i, 0, scrubMax);
+  }, [scrubAt, chartHourly, scrubMax]);
   // The index the label/line describe (the default mid-point until first engaged).
   const scrubShown = scrubClamped ?? Math.floor(scrubMax / 2);
   const scrubIso = chartHourly?.time[scrubShown];
   const scrubLabel = scrubIso
     ? `Details for ${dayKey(scrubIso) === todayKey ? formatTime(scrubIso) : `${formatDayShort(scrubIso)} ${formatTime(scrubIso)}`}`
     : "Details";
+  // The hour the air panel describes. `startKey` is "" until the forecast lands, and ""
+  // is falsy — so without the calendar fallback the panel dashed every tile even when the
+  // air data itself was fully loaded, which is the common shape of a repeat visit (air
+  // served from the localStorage cache while the multi-model forecast goes to the
+  // network). The panel is always mounted now, so that state is on screen.
+  const airNowIso =
+    nowInWindow && curTime ? curTime : `${startKey || todayInZone(place.timezone)}T12:00`;
+
   // The toggle-switch is "on" when the popover is actually showing (engaged and not
   // dismissed) — the label reads as an on/off control for the details popover.
-  const popoverOn = scrubIndex != null && !popoverHidden;
+  const popoverOn = scrubAt != null && !popoverHidden;
   // Fraction (0–1) of "now" along the scrubber, for the tick mark — null when "now"
   // isn't in the visible window (nothing to mark).
   const nowScrubIdx = chartHourly && nowIso ? findNowIndex(chartHourly.time, nowIso) : -1;
@@ -558,8 +592,8 @@ export function Dashboard({ place }: { place: Place }) {
   // Tapping the details label toggles the popover; if the scrubber isn't engaged yet,
   // the first tap engages it (line + popover at the shown index).
   const onScrubLabel = () => {
-    if (scrubIndex == null) {
-      setScrubIndex(scrubShown);
+    if (scrubAt == null) {
+      setScrubAt(scrubIso ?? null);
       setPopoverHidden(false);
     } else {
       setPopoverHidden((h) => !h);
@@ -637,9 +671,9 @@ export function Dashboard({ place }: { place: Place }) {
                   step={1}
                   value={scrubShown}
                   aria-label="Move the data inspector line"
-                  onPointerDown={() => setScrubIndex((i) => i ?? scrubShown)}
+                  onPointerDown={() => setScrubAt((a) => a ?? scrubIso ?? null)}
                   onChange={(e) => {
-                    setScrubIndex(Number(e.target.value));
+                    setScrubAt(chartHourly?.time[Number(e.target.value)] ?? null);
                     setPopoverHidden(false); // any scrub re-shows the popover
                   }}
                 />
@@ -677,26 +711,28 @@ export function Dashboard({ place }: { place: Place }) {
           >
             <div className="meteogram-anim" ref={setAnim}>
               {hasHourly ? (
-                <Suspense fallback={<MeteogramPlaceholder height={chartHeight} />}>
-                  <Meteogram
-                    hourly={chartHourly!}
-                    units={state.units}
-                    series={state.series}
-                    panels={chartPanels}
-                    tempBand={tempBand}
-                    precipBand={precipBand}
-                    nowIso={nowIso}
-                    currentIso={current!.time}
-                    daily={windowSummaries}
-                    todayKey={todayKey}
-                    hidden={[...hidden]}
-                    air={airWindow}
-                    airIndex={airIndex}
-                    dailyAir={dailyAir}
-                    scrubIndex={scrubClamped}
-                    popoverHidden={popoverHidden}
-                  />
-                </Suspense>
+                <ChunkBoundary label="The chart">
+                  <Suspense fallback={<MeteogramPlaceholder height={chartHeight} />}>
+                    <Meteogram
+                      hourly={chartHourly!}
+                      units={state.units}
+                      series={state.series}
+                      panels={chartPanels}
+                      tempBand={tempBand}
+                      precipBand={precipBand}
+                      nowIso={nowIso}
+                      currentIso={current!.time}
+                      daily={windowSummaries}
+                      todayKey={todayKey}
+                      hidden={[...hidden]}
+                      air={airWindow}
+                      airIndex={airIndex}
+                      dailyAir={dailyAir}
+                      scrubIndex={scrubClamped}
+                      popoverHidden={popoverHidden}
+                    />
+                  </Suspense>
+                </ChunkBoundary>
               ) : forecast ? (
                 // Loaded, but this window genuinely holds nothing.
                 emptyState
@@ -805,13 +841,15 @@ export function Dashboard({ place }: { place: Place }) {
         <AirQualityPanel
           data={airQ.data ?? null}
           aqhi={aqhi}
-          nowIso={nowInWindow && curTime ? curTime : startKey ? `${startKey}T12:00` : null}
+          nowIso={airNowIso}
         />
       ) : null}
 
-      <Suspense fallback={<RadarSkeleton />}>
-        <RadarView place={place} />
-      </Suspense>
+      <ChunkBoundary label="The map">
+        <Suspense fallback={<RadarSkeleton />}>
+          <RadarView place={place} />
+        </Suspense>
+      </ChunkBoundary>
     </div>
   );
 }

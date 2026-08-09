@@ -260,6 +260,7 @@ export default function RadarView({ place }: { place: Place }) {
       map.remove();
       mapRef.current = null;
       baseRef.current = null;
+      markerRef.current = null;
       aqiLayerRef.current = null;
       windLayerRef.current = null;
       layers.clear();

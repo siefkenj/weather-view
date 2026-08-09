@@ -61,6 +61,12 @@ export function ForecastHeader({
   // close). On touch there's no hover, so a tap TOGGLES the card via onClick instead —
   // and we must NOT also open on the tap's synthetic mouseenter/focus, or the same tap
   // that opens would immediately close it. So the hover/focus openers are gated here.
+  //
+  // The onClick toggle is gated the same way, and must stay that way: unguarded, a mouse
+  // click on an already-hovered tile lands on `toggle` while the card is open and closes
+  // it, with the pointer still inside — so no fresh mouseenter fires and the card stays
+  // shut until you leave and come back. It breaks hybrid touch+hover laptops too, where
+  // `(hover: hover)` matches: tap → synthetic mouseenter opens → click closes.
   const canHover = useMediaQuery("(hover: hover)");
 
   const toggle = (date: string, target: HTMLElement) => {
@@ -122,7 +128,7 @@ export function ForecastHeader({
               onMouseLeave={canHover ? () => dispatch(closeDay()) : undefined}
               onFocus={canHover ? (e) => open(d.date, e.currentTarget) : undefined}
               onBlur={canHover ? () => dispatch(closeDay()) : undefined}
-              onClick={(e) => toggle(d.date, e.currentTarget)}
+              onClick={canHover ? undefined : (e) => toggle(d.date, e.currentTarget)}
               aria-label={`${formatFullDate(d.date)}: ${wx.label}`}
             >
               <span className="fh-date">

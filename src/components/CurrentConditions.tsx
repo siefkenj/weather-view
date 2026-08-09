@@ -373,7 +373,7 @@ function TempMiniGraph({
         className="temp-mini"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label="Temperature over the day (2 a.m. to 2 a.m.) with daylight shading"
+        aria-label="Temperature over the day (midnight to midnight) with daylight shading"
       >
         {gridX.map((gx, i) => (
         <line key={`grid${i}`} className="temp-mini__grid" x1={gx} x2={gx} y1={0} y2={H} vectorEffect="non-scaling-stroke" />

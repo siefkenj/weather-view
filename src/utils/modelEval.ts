@@ -226,7 +226,9 @@ export type RankReason = "no-data" | "too-little-rain";
 export interface RankResult {
   /** Ranked by cross-validated timing error, best first. */
   combos: Combination[];
-  /** The recommendation: the simplest combo within one standard error of the top score. */
+  /** The recommendation: simply the top-scoring combination. A one-standard-error rule
+   *  (prefer the simplest blend statistically tied with the best) was measured and lost —
+   *  see the note above `const best` in `rankCombinations`. */
   best: Combination | null;
   /** Hours actually scored (truth ∩ every retained model). */
   evalHours: number;
